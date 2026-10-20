@@ -51,6 +51,13 @@ export class AgentRunner extends EventEmitter {
     return this.currentTask ? JSON.parse(JSON.stringify(this.currentTask)) : null;
   }
 
+  public isTaskActive(): boolean {
+    return (
+      this.currentTask?.status === "running" ||
+      this.currentTask?.status === "waiting_approval"
+    );
+  }
+
   /**
    * Executes a high-level natural language instruction autonomously
    * with full 3-Tier Risk Engine protection and visual HITL confirmation.
@@ -530,6 +537,13 @@ export class AgentRunner extends EventEmitter {
     `;
     await this.browserDriver.navigate(`data:text/html;charset=utf-8,${encodeURIComponent(erpHtml)}`);
     await this.dualEngine.getSnapshot({ annotateInteractive: true });
+    this.approvalGate.recordAuditLog({
+      toolName: "omnipilot_navigate",
+      params: { url: "omnipilot-erp://invoices", goal },
+      tier: RiskTier.TIER_1_SAFE,
+      requiresHITL: false,
+      success: true,
+    });
     this.updateStepStatus(0, "completed");
 
     this.updateStepStatus(1, "running");
@@ -568,6 +582,15 @@ export class AgentRunner extends EventEmitter {
     if (!approval.approved) {
       this.updateStepStatus(2, "rejected");
       this.updateStepStatus(3, "rejected");
+      this.approvalGate.recordAuditLog({
+        toolName: "omnipilot_click_element",
+        params: { selector: "#btn-invia-bonifico" },
+        tier: RiskTier.TIER_3_CRITICAL,
+        requiresHITL: true,
+        approvalStatus: "rejected",
+        success: false,
+        error: "Wire transfer rejected by human operator",
+      });
       if (this.currentTask) {
         this.currentTask.status = "rejected";
         this.currentTask.completedAt = new Date().toISOString();
@@ -639,6 +662,14 @@ export class AgentRunner extends EventEmitter {
       </html>
     `;
     await this.browserDriver.navigate(`data:text/html;charset=utf-8,${encodeURIComponent(adminHtml)}`);
+    await this.dualEngine.getSnapshot({ annotateInteractive: true });
+    this.approvalGate.recordAuditLog({
+      toolName: "omnipilot_navigate",
+      params: { url: "omnipilot-admin://db-cleanup", goal },
+      tier: RiskTier.TIER_1_SAFE,
+      requiresHITL: false,
+      success: true,
+    });
     this.updateStepStatus(0, "completed");
 
     this.updateStepStatus(1, "running");
@@ -665,6 +696,15 @@ export class AgentRunner extends EventEmitter {
     if (!approval.approved) {
       this.updateStepStatus(1, "rejected");
       this.updateStepStatus(2, "rejected");
+      this.approvalGate.recordAuditLog({
+        toolName: "omnipilot_click_element",
+        params: { selector: "#btn-delete-records", goal },
+        tier: RiskTier.TIER_3_CRITICAL,
+        requiresHITL: true,
+        approvalStatus: "rejected",
+        success: false,
+        error: "Database cleanup rejected by human operator",
+      });
       if (this.currentTask) {
         this.currentTask.status = "rejected";
         this.currentTask.completedAt = new Date().toISOString();
@@ -677,6 +717,14 @@ export class AgentRunner extends EventEmitter {
     this.updateStepStatus(1, "completed");
     this.updateStepStatus(2, "running");
     await this.browserDriver.clickElement("#btn-delete-records");
+    this.approvalGate.recordAuditLog({
+      toolName: "omnipilot_click_element",
+      params: { selector: "#btn-delete-records", goal },
+      tier: RiskTier.TIER_3_CRITICAL,
+      requiresHITL: true,
+      approvalStatus: "approved",
+      success: true,
+    });
     this.updateStepStatus(2, "completed");
 
     if (this.currentTask) {

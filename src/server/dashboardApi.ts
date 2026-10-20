@@ -52,7 +52,7 @@ export class DashboardServer {
             const status = {
               status: "operational",
               timestamp: new Date().toISOString(),
-              version: "0.1.0",
+              version: "0.2.0",
               browser: ctx.browserDriver.getStatus(),
               desktop: ctx.desktopDriver.getDisplayResolution(),
               pendingApprovalsCount: ctx.approvalGate.getPendingRequests().length,
@@ -74,9 +74,18 @@ export class DashboardServer {
             const body = await this.readJsonBody(req);
             const goal = String(body?.goal || "").trim();
             const language = body?.language === "en" ? "en" : "it";
+            const force = Boolean(body?.force);
 
             if (!goal) {
               this.sendJson(res, 400, { error: "Missing 'goal' instruction" });
+              return;
+            }
+
+            if (ctx.agentRunner.isTaskActive() && !force) {
+              this.sendJson(res, 409, {
+                error: "A task is already running or awaiting HITL approval",
+                task: ctx.agentRunner.getCurrentTask(),
+              });
               return;
             }
 
@@ -158,6 +167,10 @@ export class DashboardServer {
       });
 
       this.server.listen(this.port, () => {
+        const addr = this.server?.address();
+        if (typeof addr === "object" && addr && addr.port) {
+          this.port = addr.port;
+        }
         console.error(`[OmniPilot Dashboard] Server listening on http://localhost:${this.port}`);
         resolve(this.port);
       });
@@ -190,7 +203,14 @@ export class DashboardServer {
   private async readJsonBody(req: http.IncomingMessage): Promise<any> {
     return new Promise((resolve, reject) => {
       let body = "";
-      req.on("data", (chunk) => (body += chunk));
+      const maxBytes = 1024 * 1024; // 1 MB payload limit
+      req.on("data", (chunk) => {
+        body += chunk;
+        if (Buffer.byteLength(body) > maxBytes) {
+          req.destroy();
+          reject(new Error("Request payload too large (exceeds 1MB limit)"));
+        }
+      });
       req.on("end", () => {
         try {
           resolve(body ? JSON.parse(body) : {});
@@ -236,9 +256,23 @@ export class DashboardServer {
       return;
     }
 
-    let filePath = path.join(this.staticDir, pathname === "/" ? "index.html" : pathname);
-    if (!fs.existsSync(filePath)) {
-      filePath = path.join(this.staticDir, "index.html");
+    const resolvedStaticRoot = path.resolve(this.staticDir);
+    const decodedPathname = decodeURIComponent(pathname);
+    const relativeTarget = (decodedPathname === "/" ? "index.html" : decodedPathname).replace(
+      /^[/\\]+/,
+      ""
+    );
+    let filePath = path.resolve(resolvedStaticRoot, relativeTarget);
+
+    // Prevent directory traversal outside staticDir
+    if (!filePath.startsWith(resolvedStaticRoot)) {
+      res.writeHead(403, { "Content-Type": "text/plain; charset=utf-8" });
+      res.end("403 Forbidden: Path traversal blocked");
+      return;
+    }
+
+    if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) {
+      filePath = path.join(resolvedStaticRoot, "index.html");
     }
 
     const ext = path.extname(filePath).toLowerCase();

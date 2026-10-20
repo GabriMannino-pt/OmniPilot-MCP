@@ -4,7 +4,8 @@ import { DashboardServer } from "./dashboardApi.js";
 
 async function main() {
   const mcpServer = new OmniPilotMcpServer();
-  const port = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
+  const rawPort = process.env.DASHBOARD_PORT || process.env.PORT;
+  const port = rawPort ? parseInt(rawPort, 10) : 3000;
   const dashboard = new DashboardServer(mcpServer, { port });
 
   // Navigate to default welcome portal

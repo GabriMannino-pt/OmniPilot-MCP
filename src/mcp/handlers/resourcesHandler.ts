@@ -15,7 +15,7 @@ export function registerAllResources(server: McpServer, ctx: ToolsContext): void
     async (uri) => {
       const payload = {
         name: "omnipilot-mcp",
-        version: "0.1.0",
+        version: "0.2.0",
         timestamp: new Date().toISOString(),
         status: "operational",
         drivers: {
@@ -26,6 +26,7 @@ export function registerAllResources(server: McpServer, ctx: ToolsContext): void
           pendingApprovals: ctx.approvalGate.getPendingRequests().length,
           totalAuditLogsRecorded: ctx.approvalGate.getAuditLogs().length,
         },
+        currentTask: ctx.agentRunner.getCurrentTask(),
       };
 
       return {

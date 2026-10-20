@@ -20,7 +20,8 @@ export * from "./server/dashboardApi.js";
 
 async function main() {
   const server = new OmniPilotMcpServer();
-  const port = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
+  const rawPort = process.env.DASHBOARD_PORT || process.env.PORT;
+  const port = rawPort ? parseInt(rawPort, 10) : 3000;
   const dashboard = new DashboardServer(server, { port });
 
   process.on("SIGINT", async () => {

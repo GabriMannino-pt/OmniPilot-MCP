@@ -31,9 +31,14 @@ export class VisualAnnotator {
       const { box, label } = item;
       const color = item.color || "#ef4444"; // Default warning red
 
+      const safeX = Math.max(0, Math.min(width - 2, Math.round(box.x)));
+      const safeY = Math.max(0, Math.min(height - 2, Math.round(box.y)));
+      const safeW = Math.max(2, Math.min(width - safeX, Math.round(box.width)));
+      const safeH = Math.max(2, Math.min(height - safeY, Math.round(box.height)));
+
       // Bounding box rectangle with stroke and soft fill
       svgElements.push(
-        `<rect x="${box.x}" y="${box.y}" width="${box.width}" height="${box.height}" ` +
+        `<rect x="${safeX}" y="${safeY}" width="${safeW}" height="${safeH}" ` +
           `fill="${color}" fill-opacity="0.15" stroke="${color}" stroke-width="3" stroke-dasharray="6 3" />`
       );
 
@@ -41,13 +46,14 @@ export class VisualAnnotator {
       if (label) {
         const badgeHeight = 24;
         const textPadding = 12;
-        const estimatedTextWidth = Math.max(80, label.length * 8 + textPadding);
-        const badgeY = Math.max(0, box.y - badgeHeight);
+        const estimatedTextWidth = Math.min(width, Math.max(80, label.length * 8 + textPadding));
+        const badgeX = Math.max(0, Math.min(width - estimatedTextWidth, safeX));
+        const badgeY = Math.max(0, safeY - badgeHeight);
 
         svgElements.push(
-          `<rect x="${box.x}" y="${badgeY}" width="${estimatedTextWidth}" height="${badgeHeight}" ` +
+          `<rect x="${badgeX}" y="${badgeY}" width="${estimatedTextWidth}" height="${badgeHeight}" ` +
             `fill="${color}" rx="4" />` +
-          `<text x="${box.x + 6}" y="${badgeY + 16}" fill="#ffffff" font-family="Segoe UI, sans-serif" ` +
+          `<text x="${badgeX + 6}" y="${badgeY + 16}" fill="#ffffff" font-family="Segoe UI, sans-serif" ` +
             `font-size="12" font-weight="bold">${escapeXml(label)}</text>`
         );
       }

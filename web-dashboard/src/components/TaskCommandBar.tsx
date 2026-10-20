@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 
 interface AgentStep {
   id: string;
@@ -34,6 +34,24 @@ export const TaskCommandBar: React.FC<TaskCommandBarProps> = ({
   const [goalInput, setGoalInput] = useState<string>(
     "Invia un'email di benvenuto a mariorossi@gmail.com"
   );
+
+  useEffect(() => {
+    setGoalInput((prev) => {
+      if (
+        lang === "en" &&
+        prev === "Invia un'email di benvenuto a mariorossi@gmail.com"
+      ) {
+        return "Send a welcome email to mariorossi@gmail.com";
+      }
+      if (
+        lang === "it" &&
+        prev === "Send a welcome email to mariorossi@gmail.com"
+      ) {
+        return "Invia un'email di benvenuto a mariorossi@gmail.com";
+      }
+      return prev;
+    });
+  }, [lang]);
 
   const isRunning =
     currentTask?.status === "running" || currentTask?.status === "waiting_approval";

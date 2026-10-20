@@ -25,7 +25,7 @@ describe("DashboardServer (REST / Web Control API)", () => {
     const json = await res.json();
     expect(json.status).toBe("operational");
     expect(json.browser).toBeDefined();
-    expect(json.version).toBe("0.1.0");
+    expect(json.version).toBe("0.2.0");
   });
 
   it("should respond to GET /api/screenshot with DualPerception snapshot", async () => {
