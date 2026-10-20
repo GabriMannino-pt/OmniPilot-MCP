@@ -1,5 +1,6 @@
 import { EventEmitter } from "node:events";
 import * as readline from "node:readline";
+import * as crypto from "node:crypto";
 import { BoundingBox } from "../mcp/schemas.js";
 
 export interface ApprovalRequest {
@@ -24,6 +25,8 @@ export interface AuditLogEntry {
   executionDurationMs?: number;
   success: boolean;
   error?: string;
+  prevHash?: string;
+  hash?: string;
 }
 
 export interface ApprovalGateOptions {
@@ -157,17 +160,72 @@ export class ApprovalGate extends EventEmitter {
   }
 
   /**
-   * Records an audit log entry
+   * Computes deterministic SHA-256 hash for tamper-evident audit log chaining
    */
-  public recordAuditLog(entry: Omit<AuditLogEntry, "id" | "timestamp">): AuditLogEntry {
-    const log: AuditLogEntry = {
+  private computeEntryHash(entry: Omit<AuditLogEntry, "hash">, prevHash: string): string {
+    const canonical = JSON.stringify({
+      id: entry.id,
+      timestamp: entry.timestamp,
+      toolName: entry.toolName,
+      params: entry.params,
+      tier: entry.tier,
+      requiresHITL: entry.requiresHITL,
+      approvalStatus: entry.approvalStatus,
+      success: entry.success,
+      error: entry.error,
+      prevHash,
+    });
+    return crypto.createHash("sha256").update(canonical).digest("hex");
+  }
+
+  /**
+   * Records an audit log entry with cryptographic SHA-256 hash chaining
+   */
+  public recordAuditLog(entry: Omit<AuditLogEntry, "id" | "timestamp" | "prevHash" | "hash">): AuditLogEntry {
+    const prevHash =
+      this.auditLogs.length > 0
+        ? this.auditLogs[this.auditLogs.length - 1]!.hash || "GENESIS_0000000000000000"
+        : "GENESIS_0000000000000000";
+
+    const baseLog: Omit<AuditLogEntry, "hash"> = {
       id: `log_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
       timestamp: new Date().toISOString(),
       ...entry,
+      prevHash,
     };
+
+    const hash = this.computeEntryHash(baseLog, prevHash);
+    const log: AuditLogEntry = {
+      ...baseLog,
+      hash,
+    };
+
     this.auditLogs.push(log);
     this.emit("audit:logged", log);
     return log;
+  }
+
+  /**
+   * Verifies the cryptographic integrity of the entire SHA-256 hash chain
+   */
+  public verifyAuditChainIntegrity(): {
+    valid: boolean;
+    totalEntries: number;
+    tamperedIndex?: number;
+  } {
+    let expectedPrevHash = "GENESIS_0000000000000000";
+    for (let i = 0; i < this.auditLogs.length; i++) {
+      const entry = this.auditLogs[i]!;
+      if (entry.prevHash !== expectedPrevHash) {
+        return { valid: false, totalEntries: this.auditLogs.length, tamperedIndex: i };
+      }
+      const recomputed = this.computeEntryHash(entry, expectedPrevHash);
+      if (entry.hash !== recomputed) {
+        return { valid: false, totalEntries: this.auditLogs.length, tamperedIndex: i };
+      }
+      expectedPrevHash = entry.hash;
+    }
+    return { valid: true, totalEntries: this.auditLogs.length };
   }
 
   public getAuditLogs(filter?: { tier?: number; successOnly?: boolean }): AuditLogEntry[] {

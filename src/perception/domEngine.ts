@@ -8,6 +8,7 @@ export interface DomInspectionResult {
   accessibilityTree?: string;
   accessibilityAria?: string;
   interactiveCount: number;
+  promptInjectionWarnings?: string[];
 }
 
 export class DomEngine {
@@ -29,6 +30,7 @@ export class DomEngine {
       accessibilityTree: raw.accessibilityAria,
       accessibilityAria: raw.accessibilityAria,
       interactiveCount,
+      promptInjectionWarnings: raw.promptInjectionWarnings,
     };
   }
 

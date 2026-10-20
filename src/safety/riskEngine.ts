@@ -114,12 +114,21 @@ const SENSITIVE_URL_PATTERNS = [
  * (splits camelCase and treats -, _, ., #, /, spaces as token delimiters,
  * avoiding Scunthorpe false positives like '#border-box' matching 'order')
  */
-function containsToken(text: string, keyword: string): boolean {
-  // Normalize camelCase -> spaces
-  const normalized = text.replace(/([a-z])([A-Z])/g, "$1 $2").toLowerCase();
-  const escaped = keyword
-    .toLowerCase()
-    .replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+function extractTokenSet(text: string): Set<string> {
+  const normalized = text
+    .slice(0, 4096)
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .toLowerCase();
+  const matches = normalized.match(/[a-z0-9]+/g);
+  return new Set(matches || []);
+}
+
+function hasKeywordToken(text: string, tokenSet: Set<string>, keyword: string): boolean {
+  if (/^[a-z0-9]+$/.test(keyword)) {
+    return tokenSet.has(keyword);
+  }
+  const normalized = text.slice(0, 4096).replace(/([a-z])([A-Z])/g, "$1 $2").toLowerCase();
+  const escaped = keyword.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const regex = new RegExp(`(?:^|[^a-z0-9])${escaped}(?:$|[^a-z0-9])`, "i");
   return regex.test(normalized);
 }
@@ -190,16 +199,16 @@ export class RiskEngine {
       };
     }
 
-    // 4. Navigation check (Safe unless dangerous scheme like javascript:)
+    // 4. Navigation check (Safe unless dangerous scheme like javascript:, file://, vbscript:, or cloud metadata SSRF)
     if (toolName === "omnipilot_navigate") {
-      const targetUrl = String(params.url || "");
-      if (/^\s*javascript:/i.test(targetUrl)) {
+      const targetUrl = String(params.url || "").trim();
+      if (/^(javascript|vbscript|file):/i.test(targetUrl) || /169\.254\.169\.254|metadata\.google\.internal/i.test(targetUrl)) {
         return {
           tier: RiskTier.TIER_3_CRITICAL,
-          reason: "Blocked potentially unsafe javascript: URI navigation",
+          reason: "Blocked potentially unsafe URI scheme or SSRF cloud metadata endpoint",
           requiresHITL: true,
           matchedRules: ["rule:unsafe_navigation_scheme"],
-          sensitiveTokensFound: ["javascript:"],
+          sensitiveTokensFound: [targetUrl.slice(0, 40)],
         };
       }
       return {
@@ -234,15 +243,17 @@ export class RiskEngine {
 
     // 7. Selector inspection (only for click actions or pressEnter submits; typing into a draft field shouldn't fail just because the form exists)
     if (typeof params.selector === "string" && (toolName === "omnipilot_click_element" || params.pressEnter === true)) {
+      const selTokens = extractTokenSet(params.selector);
       for (const keyword of this.customKeywords) {
-        if (containsToken(params.selector, keyword)) {
+        if (hasKeywordToken(params.selector, selTokens, keyword)) {
           sensitiveTokens.push(`selector contains '${keyword}'`);
         }
       }
     } else if (typeof params.selector === "string" && toolName === "omnipilot_type_text") {
       // For typing without Enter, still check if the input selector itself is a critical credential/card field
+      const selTokens = extractTokenSet(params.selector);
       for (const kw of ["cvv", "cvc", "iban", "card", "carta", "password", "pin", "secret", "token"]) {
-        if (containsToken(params.selector, kw)) {
+        if (hasKeywordToken(params.selector, selTokens, kw)) {
           sensitiveTokens.push(`sensitive input selector '${kw}'`);
         }
       }
@@ -260,8 +271,9 @@ export class RiskEngine {
       .join(" ");
 
     if (combinedElementText && (toolName === "omnipilot_click_element" || toolName === "omnipilot_click_coordinate" || params.pressEnter === true)) {
+      const elemTokens = extractTokenSet(combinedElementText);
       for (const keyword of this.customKeywords) {
-        if (containsToken(combinedElementText, keyword)) {
+        if (hasKeywordToken(combinedElementText, elemTokens, keyword)) {
           sensitiveTokens.push(`target element contains '${keyword}'`);
         }
       }
@@ -269,8 +281,9 @@ export class RiskEngine {
 
     // 9. Text payload inspection (for destructive commands typed directly)
     if (typeof params.text === "string" && !params.isSecret) {
+      const textTokens = extractTokenSet(params.text);
       for (const keyword of ["delete", "cancella", "elimina", "drop", "truncate", "destroy", "wipe", "purge"]) {
-        if (containsToken(params.text, keyword)) {
+        if (hasKeywordToken(params.text, textTokens, keyword)) {
           sensitiveTokens.push(`input text contains '${keyword}'`);
         }
       }

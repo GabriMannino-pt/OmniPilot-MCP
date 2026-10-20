@@ -81,7 +81,15 @@ export class BrowserDriver {
       this.page = await this.context.newPage();
     }
 
-    // Attach CDP/Network-Level Mutation Monitor
+    // Attach CDP/Network-Level Mutation Monitor & Crash Self-Healing Listeners
+    this.page.on("crash", () => {
+      this.page = null;
+      this.isInitialized = false;
+    });
+    this.page.on("close", () => {
+      this.page = null;
+      this.isInitialized = false;
+    });
     this.page.on("request", (req) => {
       const method = req.method().toUpperCase();
       if (["POST", "PUT", "DELETE", "PATCH"].includes(method)) {
@@ -99,7 +107,14 @@ export class BrowserDriver {
   }
 
   private async ensurePage(): Promise<Page> {
-    if (!this.isInitialized || !this.page) {
+    if (
+      !this.isInitialized ||
+      !this.page ||
+      this.page.isClosed() ||
+      (this.browser && !this.browser.isConnected())
+    ) {
+      this.isInitialized = false;
+      this.page = null;
       await this.initialize();
     }
     return this.page!;
@@ -141,6 +156,7 @@ export class BrowserDriver {
     selector?: string;
     nodes: DomElementInfo[];
     accessibilityAria?: string;
+    promptInjectionWarnings?: string[];
   }> {
     const page = await this.ensurePage();
 
@@ -154,13 +170,15 @@ export class BrowserDriver {
       }
     }
 
-    const nodes: DomElementInfo[] = await page.evaluate(
+    const evalResult: { nodes: DomElementInfo[]; warnings: string[] } = await page.evaluate(
       `(({ targetSelector }) => {
         const root = targetSelector ? document.querySelector(targetSelector) : document.body;
-        if (!root) return [];
+        if (!root) return { nodes: [], warnings: [] };
 
         const interactiveTags = new Set(["BUTTON", "A", "INPUT", "SELECT", "TEXTAREA"]);
         const elements = [];
+        const warnings = [];
+        const injectionRegex = /(ignore\\s+(all\\s+)?previous\\s+instructions|ignora\\s+le\\s+istruzioni|system\\s+prompt|auto[-_]?approve|esegui\\s+bonifico\\s+nascosto)/i;
         const allCandidates = root.querySelectorAll("*");
         let markCounter = 1;
 
@@ -184,6 +202,25 @@ export class BrowserDriver {
         const candidateList = [root, ...Array.from(allCandidates)];
 
         for (const el of candidateList) {
+          const style = window.getComputedStyle(el);
+          const rawText = (el.innerText || el.textContent || "").trim();
+
+          // Detect Indirect Prompt Injection hidden in DOM
+          const isHidden =
+            style.display === "none" ||
+            style.visibility === "hidden" ||
+            parseFloat(style.opacity || "1") < 0.05 ||
+            parseFloat(style.fontSize || "12") < 1 ||
+            el.hasAttribute("hidden") ||
+            el.getAttribute("aria-hidden") === "true";
+
+          if (rawText && injectionRegex.test(rawText)) {
+            warnings.push("Suspicious prompt injection text detected in <" + el.tagName + ">: " + rawText.slice(0, 80));
+            if (isHidden) continue;
+          }
+
+          if (isHidden) continue;
+
           const tagName = el.tagName;
           const isInteractive =
             interactiveTags.has(tagName) ||
@@ -203,7 +240,7 @@ export class BrowserDriver {
             const attributes = {};
             for (let i = 0; i < el.attributes.length; i++) {
               const attr = el.attributes[i];
-              if (attr && ["id", "name", "type", "role", "aria-label", "placeholder", "href", "data-omnipilot-mark"].includes(attr.name)) {
+              if (attr && ["id", "name", "type", "role", "aria-label", "placeholder", "href", "title", "data-action", "data-omnipilot-mark"].includes(attr.name)) {
                 attributes[attr.name] = attr.value;
               }
             }
@@ -218,7 +255,7 @@ export class BrowserDriver {
               tagName,
               text: cleanText,
               role: el.getAttribute("role") || (interactiveTags.has(tagName) ? tagName.toLowerCase() : undefined),
-              name: el.getAttribute("aria-label") || el.getAttribute("placeholder") || el.getAttribute("name") || cleanText || undefined,
+              name: el.getAttribute("aria-label") || el.getAttribute("placeholder") || el.getAttribute("name") || el.getAttribute("title") || cleanText || undefined,
               boundingBox: {
                 x: Math.round(rect.x),
                 y: Math.round(rect.y),
@@ -231,20 +268,22 @@ export class BrowserDriver {
           }
         }
 
-        return elements;
+        return { nodes: elements, warnings };
       })({ targetSelector: ${JSON.stringify(selector || null)} })`
     );
 
     return {
       selector,
-      nodes,
+      nodes: evalResult.nodes,
       accessibilityAria,
+      promptInjectionWarnings: evalResult.warnings,
     };
   }
 
   /**
    * Pre-Flight DOM Inspector: resolves the actual DOM element for a selector
-   * BEFORE clicking or typing so RiskEngine inspects real text, attributes, and form context.
+   * BEFORE clicking or typing so RiskEngine inspects real text, attributes, child alt/svg labels,
+   * pseudo-elements, and form context (defeating Visual/Attribute Spoofing).
    */
   public async inspectTargetSelector(selector: string): Promise<HitTestedElement | null> {
     const page = await this.ensurePage();
@@ -260,11 +299,30 @@ export class BrowserDriver {
             const submitBtns = Array.from(form.querySelectorAll('button, input[type="submit"]'));
             formSubmitText = submitBtns.map(b => b.innerText || b.value || b.id || "").join(" ");
           }
+          // Extract child img[alt], svg[aria-label], title, data-action, and CSS ::before/::after content
+          const childAlts = Array.from(el.querySelectorAll("img[alt], svg[aria-label], [title], [data-action]"))
+            .map(c => c.getAttribute("alt") || c.getAttribute("aria-label") || c.getAttribute("title") || c.getAttribute("data-action") || "")
+            .join(" ");
+          const beforeContent = window.getComputedStyle(el, "::before").content || "";
+          const afterContent = window.getComputedStyle(el, "::after").content || "";
+          const pseudoText = [beforeContent, afterContent]
+            .map(s => s.replace(/^["']|["']$/g, ""))
+            .filter(s => s && s !== "none" && s !== "normal")
+            .join(" ");
+
+          const combinedText = [
+            el.innerText || el.value || el.textContent || "",
+            el.getAttribute("title") || "",
+            el.getAttribute("data-action") || "",
+            childAlts,
+            pseudoText
+          ].filter(Boolean).join(" ").trim().slice(0, 160);
+
           return {
             selector: el.id ? "#" + el.id : sel,
             tagName: el.tagName,
-            text: (el.innerText || el.value || el.textContent || "").trim().slice(0, 120),
-            name: el.getAttribute("aria-label") || el.getAttribute("name") || el.getAttribute("placeholder") || undefined,
+            text: combinedText,
+            name: el.getAttribute("aria-label") || el.getAttribute("name") || el.getAttribute("placeholder") || el.getAttribute("title") || undefined,
             role: el.getAttribute("role") || el.tagName.toLowerCase(),
             type: el.getAttribute("type") || undefined,
             formSubmitText: formSubmitText.trim().slice(0, 120) || undefined,
@@ -296,11 +354,29 @@ export class BrowserDriver {
           if (!rawEl) return null;
           const el = rawEl.closest('button, a, input, select, textarea, [role="button"], [onclick]') || rawEl;
           const rect = el.getBoundingClientRect();
+          const childAlts = Array.from(el.querySelectorAll("img[alt], svg[aria-label], [title], [data-action]"))
+            .map(c => c.getAttribute("alt") || c.getAttribute("aria-label") || c.getAttribute("title") || c.getAttribute("data-action") || "")
+            .join(" ");
+          const beforeContent = window.getComputedStyle(el, "::before").content || "";
+          const afterContent = window.getComputedStyle(el, "::after").content || "";
+          const pseudoText = [beforeContent, afterContent]
+            .map(s => s.replace(/^["']|["']$/g, ""))
+            .filter(s => s && s !== "none" && s !== "normal")
+            .join(" ");
+
+          const combinedText = [
+            el.innerText || el.value || el.textContent || "",
+            el.getAttribute("title") || "",
+            el.getAttribute("data-action") || "",
+            childAlts,
+            pseudoText
+          ].filter(Boolean).join(" ").trim().slice(0, 160);
+
           return {
             selector: el.id ? "#" + el.id : el.tagName.toLowerCase(),
             tagName: el.tagName,
-            text: (el.innerText || el.value || el.textContent || "").trim().slice(0, 120),
-            name: el.getAttribute("aria-label") || el.getAttribute("name") || undefined,
+            text: combinedText,
+            name: el.getAttribute("aria-label") || el.getAttribute("name") || el.getAttribute("title") || undefined,
             role: el.getAttribute("role") || el.tagName.toLowerCase(),
             type: el.getAttribute("type") || undefined,
             boundingBox: {
