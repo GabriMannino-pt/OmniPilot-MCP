@@ -1,0 +1,27 @@
+# Smithery configuration file
+# Documentation: https://smithery.ai/docs/config
+
+startCommand:
+  type: stdio
+  configSchema:
+    type: object
+    properties:
+      dashboardPort:
+        type: number
+        title: "Web Dashboard Port"
+        description: "Port for the local web control cockpit & human-in-the-loop visual approval firewall"
+        default: 3000
+      headless:
+        type: boolean
+        title: "Headless Mode"
+        description: "Run Playwright browser in headless mode (default: false for visual oversight)"
+        default: false
+  commandFunction: |-
+    (config) => ({
+      command: "node",
+      args: ["dist/index.js"],
+      env: {
+        DASHBOARD_PORT: config?.dashboardPort ? String(config.dashboardPort) : "3000",
+        HEADLESS: config?.headless ? "true" : "false"
+      }
+    })

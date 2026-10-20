@@ -8,7 +8,8 @@
 [![Node.js](https://img.shields.io/badge/Node.js-%3E%3D20-green?logo=node.js)](https://nodejs.org/)
 [![Protocol](https://img.shields.io/badge/MCP-2024--11--05-orange?logo=json)](https://modelcontextprotocol.io/)
 [![Playwright](https://img.shields.io/badge/Playwright-Chromium%20Headless%20%2B%20CDP-45ba4b?logo=playwright)](https://playwright.dev/)
-[![React 19](https://img.shields.io/badge/Dashboard-React%2019%20%2B%20Vite%20%28IT%2FEN%29-61dafb?logo=react)](https://vitejs.dev/)
+[![React 19](https://img.shields.io/badge/Dashboard-React%2019%20%20%2BVite%20%28IT%2FEN%29-61dafb?logo=react)](https://vitejs.dev/)
+[![Smithery](https://smithery.ai/badge/@GabriMannino-pt/OmniPilot-MCP)](https://smithery.ai/server/@GabriMannino-pt/OmniPilot-MCP)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 [**🇬🇧 English**](#-english-documentation) | [**🇮🇹 Documentazione Italiana**](#-documentazione-italiana)
@@ -138,6 +139,12 @@ Ecco cosa fa il sistema passo dopo passo:
 
 ### Installation / Installazione
 
+#### Option A: One-Click Install via Smithery (Claude Desktop / Cursor / Windsurf)
+```bash
+npx -y @smithery/cli install @GabriMannino-pt/OmniPilot-MCP --client claude
+```
+
+#### Option B: Manual Local Clone & Run
 ```bash
 git clone https://github.com/GabriMannino-pt/OmniPilot-MCP.git
 cd OmniPilot-MCP
