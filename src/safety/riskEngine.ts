@@ -199,13 +199,18 @@ export class RiskEngine {
       };
     }
 
-    // 4. Navigation check (Safe unless dangerous scheme like javascript:, file://, vbscript:, or cloud metadata SSRF)
+    // 4. Navigation check (Safe unless dangerous scheme like javascript:, file://, vbscript:, cloud metadata SSRF, or Private LAN RFC1918)
     if (toolName === "omnipilot_navigate") {
       const targetUrl = String(params.url || "").trim();
-      if (/^(javascript|vbscript|file):/i.test(targetUrl) || /169\.254\.169\.254|metadata\.google\.internal/i.test(targetUrl)) {
+      const isPrivateLanOrMetadata =
+        /^(javascript|vbscript|file):/i.test(targetUrl) ||
+        /169\.254\.169\.254|metadata\.google\.internal/i.test(targetUrl) ||
+        /^https?:\/\/(192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+|172\.(1[6-9]|2\d|3[0-1])\.\d+\.\d+)/i.test(targetUrl);
+
+      if (isPrivateLanOrMetadata) {
         return {
           tier: RiskTier.TIER_3_CRITICAL,
-          reason: "Blocked potentially unsafe URI scheme or SSRF cloud metadata endpoint",
+          reason: "Blocked potentially unsafe URI scheme, private LAN egress, or SSRF cloud metadata endpoint",
           requiresHITL: true,
           matchedRules: ["rule:unsafe_navigation_scheme"],
           sensitiveTokensFound: [targetUrl.slice(0, 40)],
@@ -216,6 +221,18 @@ export class RiskEngine {
         reason: "Standard browser page navigation",
         requiresHITL: false,
         matchedRules: ["rule:navigation_safe"],
+      };
+    }
+
+    // 4b. Zero-DOM Opaque <canvas> Guard (when coordinate click hits an unlabeled <canvas> with no accessible text)
+    if (hitElement?.role === "canvas-unlabeled") {
+      return {
+        tier: RiskTier.TIER_3_CRITICAL,
+        reason: "Blind coordinate click on unlabeled Zero-DOM <canvas> surface requires visual human verification",
+        requiresHITL: true,
+        matchedRules: ["rule:zero_dom_canvas_guard"],
+        sensitiveTokensFound: ["<canvas unlabeled>"],
+        suggestedBoundingBox: hitElement.boundingBox,
       };
     }
 

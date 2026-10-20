@@ -417,4 +417,119 @@ describe("Frontier 10-Point Verification & Hardening Suite", () => {
     expect(integrityAfter.valid).toBe(false);
     expect(integrityAfter.tamperedIndex).toBe(1);
   });
+
+  it("STEP 11 [Anti-TOCTOU Millisecond DOM Mutation Defense]: should block click when button mutates from 'Salva Bozza' to 'Invia Bonifico €50.000' on mouseenter", async () => {
+    const ctx = mcpServer.getContext();
+    const toctouHtml = `
+      <!DOCTYPE html>
+      <html>
+        <body style="padding:40px;">
+          <button id="btn-toctou-trap"
+            onmouseenter="this.innerText = 'Invia Bonifico €50.000'"
+            onclick="window.__toctouClicked = true"
+            style="padding:16px 24px;">Salva Bozza</button>
+        </body>
+      </html>
+    `;
+    await ctx.browserDriver.navigate(
+      `data:text/html;charset=utf-8,${encodeURIComponent(toctouHtml)}`
+    );
+
+    const preflight = await ctx.browserDriver.inspectTargetSelector("#btn-toctou-trap");
+    expect(preflight?.text).toBe("Salva Bozza");
+
+    await expect(
+      ctx.browserDriver.clickElement("#btn-toctou-trap", false, preflight?.text)
+    ).rejects.toThrow(/TOCTOU_DOM_MUTATION_BLOCKED/);
+
+    const page = await ctx.browserDriver.getPage();
+    const wasClicked = await page.evaluate(() => Boolean((window as any).__toctouClicked));
+    expect(wasClicked).toBe(false);
+  });
+
+  it("STEP 12 [Anti-DNS Rebinding & Private LAN Egress Firewall]: should block navigation to private RFC1918 LAN IPs (192.168.x.x, 10.x.x.x, 172.16.x.x)", () => {
+    const engine = new RiskEngine();
+    const privateIps = [
+      "http://192.168.1.1/router-admin",
+      "http://10.0.0.42/internal-erp",
+      "https://172.16.5.10/intranet",
+    ];
+
+    for (const url of privateIps) {
+      const res = engine.evaluateAction({
+        toolName: "omnipilot_navigate",
+        params: { url },
+      });
+      expect(res.tier).toBe(RiskTier.TIER_3_CRITICAL);
+      expect(res.requiresHITL).toBe(true);
+    }
+  });
+
+  it("STEP 13 [Zero-DOM Unlabeled <canvas> Surface Guard]: should intercept blind coordinate clicks on an unlabeled <canvas> as Tier 3 Critical", async () => {
+    const ctx = mcpServer.getContext();
+    const canvasHtml = `
+      <!DOCTYPE html>
+      <html>
+        <body style="margin:0;padding:0;">
+          <canvas id="opaque-webgl-canvas" width="500" height="400" style="width:500px;height:400px;background:#1e293b;"></canvas>
+        </body>
+      </html>
+    `;
+    await ctx.browserDriver.navigate(
+      `data:text/html;charset=utf-8,${encodeURIComponent(canvasHtml)}`
+    );
+
+    const hitCanvas = await ctx.browserDriver.inspectElementAtPoint(150, 150);
+    expect(hitCanvas).not.toBeNull();
+    expect(hitCanvas?.tagName).toBe("CANVAS");
+    expect(hitCanvas?.role).toBe("canvas-unlabeled");
+
+    const risk = ctx.riskEngine.evaluateAction({
+      toolName: "omnipilot_click_coordinate",
+      params: { x: 150, y: 150, target: "browser" },
+      hitElement: hitCanvas,
+    });
+    expect(risk.tier).toBe(RiskTier.TIER_3_CRITICAL);
+    expect(risk.requiresHITL).toBe(true);
+    expect(risk.matchedRules).toContain("rule:zero_dom_canvas_guard");
+  });
+
+  it("STEP 14 [Localhost Anti-CSRF Origin Guard]: should block cross-origin POST requests from untrusted external websites with 403 Forbidden", async () => {
+    const csrfRes = await fetch(`http://localhost:${port}/api/tasks/execute`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Origin: "https://evil-phishing-site.example.com",
+      },
+      body: JSON.stringify({ goal: "Send email from CSRF attack" }),
+    });
+
+    expect(csrfRes.status).toBe(403);
+    const body = await csrfRes.json();
+    expect(body.error).toContain("CSRF Protection");
+  });
+
+  it("STEP 15 [Multi-Tab / Popup Escape Defense (window.open)]: should automatically attach security & network monitors when a page opens a popup tab", async () => {
+    const ctx = mcpServer.getContext();
+    const openerHtml = `
+      <!DOCTYPE html>
+      <html>
+        <body>
+          <button id="btn-open-popup" onclick="window.open('data:text/html,<html><body><h1 id=popup-title>Popup Monitored</h1></body></html>', '_blank')">
+            Open Popup
+          </button>
+        </body>
+      </html>
+    `;
+    await ctx.browserDriver.navigate(
+      `data:text/html;charset=utf-8,${encodeURIComponent(openerHtml)}`
+    );
+
+    await ctx.browserDriver.clickElement("#btn-open-popup");
+    // Wait briefly for the popup event to fire and switch active page
+    await new Promise((r) => setTimeout(r, 300));
+
+    const activeUrl = await ctx.browserDriver.getActiveUrl();
+    expect(activeUrl).toContain("Popup%20Monitored");
+  });
 });

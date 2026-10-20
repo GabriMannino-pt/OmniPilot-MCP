@@ -383,7 +383,8 @@ export function registerAllTools(server: McpServer, ctx: ToolsContext): void {
       try {
         const result = await ctx.browserDriver.clickElement(
           effectiveSelector,
-          args.waitForNavigation
+          args.waitForNavigation,
+          hitElement?.text
         );
 
         ctx.approvalGate.recordAuditLog({

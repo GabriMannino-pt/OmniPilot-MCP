@@ -42,6 +42,20 @@ export class DashboardServer {
           return;
         }
 
+        // Anti-CSRF Origin Guard on state-mutating POST requests
+        if (req.method === "POST") {
+          const origin = req.headers["origin"];
+          if (
+            origin &&
+            !/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(origin)
+          ) {
+            this.sendJson(res, 403, {
+              error: `CSRF Protection: Cross-Origin POST from untrusted origin '${origin}' blocked`,
+            });
+            return;
+          }
+        }
+
         const url = new URL(req.url || "/", `http://localhost:${this.port}`);
         const pathname = url.pathname;
         const ctx = this.mcpServer.getContext();

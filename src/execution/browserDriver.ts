@@ -81,16 +81,33 @@ export class BrowserDriver {
       this.page = await this.context.newPage();
     }
 
-    // Attach CDP/Network-Level Mutation Monitor & Crash Self-Healing Listeners
-    this.page.on("crash", () => {
-      this.page = null;
-      this.isInitialized = false;
+    this.attachPageMonitors(this.page);
+
+    // Multi-Tab / Popup Escape Protection: automatically monitor any newly opened tab or window.open()
+    this.context.on("page", (popupPage) => {
+      this.attachPageMonitors(popupPage);
+      this.page = popupPage;
+      this.activeUrl = popupPage.url();
     });
-    this.page.on("close", () => {
-      this.page = null;
-      this.isInitialized = false;
+
+    this.activeUrl = this.page.url();
+    this.isInitialized = true;
+  }
+
+  private attachPageMonitors(targetPage: Page): void {
+    targetPage.on("crash", () => {
+      if (this.page === targetPage) {
+        this.page = null;
+        this.isInitialized = false;
+      }
     });
-    this.page.on("request", (req) => {
+    targetPage.on("close", () => {
+      if (this.page === targetPage) {
+        this.page = null;
+        this.isInitialized = false;
+      }
+    });
+    targetPage.on("request", (req) => {
       const method = req.method().toUpperCase();
       if (["POST", "PUT", "DELETE", "PATCH"].includes(method)) {
         this.networkMutations.push({
@@ -101,9 +118,6 @@ export class BrowserDriver {
         });
       }
     });
-
-    this.activeUrl = this.page.url();
-    this.isInitialized = true;
   }
 
   private async ensurePage(): Promise<Page> {
@@ -372,12 +386,18 @@ export class BrowserDriver {
             pseudoText
           ].filter(Boolean).join(" ").trim().slice(0, 160);
 
+          const elemName = el.getAttribute("aria-label") || el.getAttribute("name") || el.getAttribute("title") || undefined;
+          const computedRole =
+            el.tagName === "CANVAS" && !combinedText && !elemName
+              ? "canvas-unlabeled"
+              : el.getAttribute("role") || el.tagName.toLowerCase();
+
           return {
             selector: el.id ? "#" + el.id : el.tagName.toLowerCase(),
             tagName: el.tagName,
             text: combinedText,
-            name: el.getAttribute("aria-label") || el.getAttribute("name") || el.getAttribute("title") || undefined,
-            role: el.getAttribute("role") || el.tagName.toLowerCase(),
+            name: elemName,
+            role: computedRole,
             type: el.getAttribute("type") || undefined,
             boundingBox: {
               x: Math.round(rect.x),
@@ -396,11 +416,24 @@ export class BrowserDriver {
 
   public async clickElement(
     selector: string,
-    waitForNavigation: boolean = false
+    waitForNavigation: boolean = false,
+    expectedPreFlightText?: string
   ): Promise<{ clicked: boolean; selector: string; finalUrl: string }> {
     const page = await this.ensurePage();
     const locator = page.locator(selector).first();
     await locator.waitFor({ state: "visible", timeout: 8000 });
+
+    // Anti-TOCTOU Guard: hover first to trigger any mouseenter/mouseover DOM mutation traps,
+    // then verify the element text did not mutate after the Pre-Flight check.
+    if (expectedPreFlightText !== undefined) {
+      await locator.hover({ timeout: 3000 }).catch(() => {});
+      const postHoverHit = await this.inspectTargetSelector(selector);
+      if (postHoverHit && postHoverHit.text !== expectedPreFlightText) {
+        throw new Error(
+          `TOCTOU_DOM_MUTATION_BLOCKED: Element "${selector}" mutated from "${expectedPreFlightText}" to "${postHoverHit.text}" right before click`
+        );
+      }
+    }
 
     if (waitForNavigation) {
       await Promise.all([
