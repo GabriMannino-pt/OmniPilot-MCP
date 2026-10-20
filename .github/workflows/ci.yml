@@ -8,7 +8,7 @@ on:
 
 jobs:
   build-and-test:
-    name: Build, Lint & Unit Tests
+    name: Build, Lint & Unit/E2E Tests
     runs-on: ubuntu-latest
 
     strategy:
@@ -25,13 +25,19 @@ jobs:
           node-version: ${{ matrix.node-version }}
           cache: "npm"
 
-      - name: Install Dependencies
+      - name: Install Core Dependencies
         run: npm ci
 
-      - name: Verify TypeScript Compilation
+      - name: Install Playwright Headless Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Build Web Control Dashboard
+        run: cd web-dashboard && npm ci && npm run build
+
+      - name: Verify TypeScript Compilation (Strict Mode)
         run: npm run build
 
-      - name: Run Test Suite
+      - name: Run Complete Test Suite (Unit + E2E + Red-Team Security)
         run: npm test
 
       - name: Execute E2E CLI Showcase Runner

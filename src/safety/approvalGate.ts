@@ -8,6 +8,7 @@ export interface ApprovalRequest {
   actionSummary: string;
   tier: number;
   boundingBox?: BoundingBox;
+  annotatedScreenshot?: string;
   contextDetails?: Record<string, any>;
   status: "pending" | "approved" | "rejected" | "timed_out";
 }
@@ -42,7 +43,7 @@ export class ApprovalGate extends EventEmitter {
 
   private auditLogs: AuditLogEntry[] = [];
   private autoApprove: boolean = false;
-  private defaultTimeoutMs: number = 30000;
+  private defaultTimeoutMs: number = 60000;
   private enableCliPrompt: boolean = false;
 
   constructor(options?: ApprovalGateOptions) {
@@ -70,7 +71,8 @@ export class ApprovalGate extends EventEmitter {
     tier: number = 3,
     boundingBox?: BoundingBox,
     contextDetails?: Record<string, any>,
-    timeoutMs: number = this.defaultTimeoutMs
+    timeoutMs: number = this.defaultTimeoutMs,
+    annotatedScreenshot?: string
   ): Promise<{ approved: boolean; requestId: string }> {
     const id = `req_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
     const request: ApprovalRequest = {
@@ -79,6 +81,7 @@ export class ApprovalGate extends EventEmitter {
       actionSummary,
       tier,
       boundingBox,
+      annotatedScreenshot,
       contextDetails,
       status: "pending",
     };
@@ -127,14 +130,14 @@ export class ApprovalGate extends EventEmitter {
       output: process.stdout,
     });
 
-    console.log("\n=======================================================");
-    console.log("🛑 [HITL CONFIRMATION REQUIRED]");
-    console.log(`Action: ${request.actionSummary}`);
-    console.log(`Risk Tier: ${request.tier} (Critical / Irreversible)`);
+    console.error("\n=======================================================");
+    console.error("🛑 [HITL CONFIRMATION REQUIRED]");
+    console.error(`Action: ${request.actionSummary}`);
+    console.error(`Risk Tier: ${request.tier} (Critical / Irreversible)`);
     if (request.boundingBox) {
-      console.log(`Target Coordinates: (${request.boundingBox.x}, ${request.boundingBox.y}) [${request.boundingBox.width}x${request.boundingBox.height}px]`);
+      console.error(`Target Coordinates: (${request.boundingBox.x}, ${request.boundingBox.y}) [${request.boundingBox.width}x${request.boundingBox.height}px]`);
     }
-    console.log("=======================================================");
+    console.error("=======================================================");
 
     rl.question("👉 Do you authorize this action? [y/N]: ", (answer) => {
       rl.close();

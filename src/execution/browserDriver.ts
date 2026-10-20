@@ -1,8 +1,10 @@
 import { chromium, Browser, BrowserContext, Page } from "playwright";
 import { BoundingBox } from "../mcp/schemas.js";
+import { HitTestedElement } from "../safety/riskEngine.js";
 
 export interface DomElementInfo {
   selector: string;
+  markId?: number;
   tagName: string;
   text?: string;
   role?: string;
@@ -21,6 +23,14 @@ export interface BrowserDriverConfig {
   headless?: boolean;
   viewportWidth?: number;
   viewportHeight?: number;
+  cdpEndpoint?: string;
+}
+
+export interface NetworkMutationEvent {
+  timestamp: string;
+  method: string;
+  url: string;
+  postData?: string;
 }
 
 export class BrowserDriver {
@@ -30,8 +40,15 @@ export class BrowserDriver {
   private activeUrl: string = "about:blank";
   private isInitialized: boolean = false;
   private config: BrowserDriverConfig;
+  private networkMutations: NetworkMutationEvent[] = [];
 
-  constructor(config: BrowserDriverConfig = { headless: true, viewportWidth: 1280, viewportHeight: 800 }) {
+  constructor(
+    config: BrowserDriverConfig = {
+      headless: true,
+      viewportWidth: 1280,
+      viewportHeight: 800,
+    }
+  ) {
     this.config = config;
   }
 
@@ -40,21 +57,43 @@ export class BrowserDriver {
       return;
     }
 
-    this.browser = await chromium.launch({
-      headless: this.config.headless ?? true,
-      args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"],
+    if (this.config.cdpEndpoint) {
+      this.browser = await chromium.connectOverCDP(this.config.cdpEndpoint);
+      const contexts = this.browser.contexts();
+      this.context = contexts[0] ?? (await this.browser.newContext());
+      const pages = this.context.pages();
+      this.page = pages[0] ?? (await this.context.newPage());
+    } else {
+      this.browser = await chromium.launch({
+        headless: this.config.headless ?? true,
+        args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"],
+      });
+
+      this.context = await this.browser.newContext({
+        viewport: {
+          width: this.config.viewportWidth ?? 1280,
+          height: this.config.viewportHeight ?? 800,
+        },
+        userAgent:
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 OmniPilot/0.2",
+      });
+
+      this.page = await this.context.newPage();
+    }
+
+    // Attach CDP/Network-Level Mutation Monitor
+    this.page.on("request", (req) => {
+      const method = req.method().toUpperCase();
+      if (["POST", "PUT", "DELETE", "PATCH"].includes(method)) {
+        this.networkMutations.push({
+          timestamp: new Date().toISOString(),
+          method,
+          url: req.url(),
+          postData: req.postData() ?? undefined,
+        });
+      }
     });
 
-    this.context = await this.browser.newContext({
-      viewport: {
-        width: this.config.viewportWidth ?? 1280,
-        height: this.config.viewportHeight ?? 800,
-      },
-      userAgent:
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 OmniPilot/0.1",
-    });
-
-    this.page = await this.context.newPage();
     this.activeUrl = this.page.url();
     this.isInitialized = true;
   }
@@ -66,16 +105,20 @@ export class BrowserDriver {
     return this.page!;
   }
 
-  public async navigate(url: string): Promise<string> {
+  public async navigate(
+    url: string,
+    waitUntil: "domcontentloaded" | "load" | "networkidle" = "domcontentloaded"
+  ): Promise<string> {
     const page = await this.ensurePage();
-    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 });
+    await page.goto(url, { waitUntil, timeout: 30000 });
     this.activeUrl = page.url();
     return this.activeUrl;
   }
 
   public async getActiveUrl(): Promise<string> {
     if (!this.page) return this.activeUrl;
-    return this.page.url();
+    this.activeUrl = this.page.url();
+    return this.activeUrl;
   }
 
   public async takeScreenshot(fullPage: boolean = false): Promise<string> {
@@ -87,6 +130,10 @@ export class BrowserDriver {
     return buffer.toString("base64");
   }
 
+  /**
+   * Inspects the DOM, assigns Set-of-Mark (SoM) IDs (`data-omnipilot-mark`)
+   * to all interactive elements, and extracts the ARIA accessibility snapshot.
+   */
   public async inspectDom(
     selector?: string,
     includeAccessibility: boolean = true
@@ -115,13 +162,22 @@ export class BrowserDriver {
         const interactiveTags = new Set(["BUTTON", "A", "INPUT", "SELECT", "TEXTAREA"]);
         const elements = [];
         const allCandidates = root.querySelectorAll("*");
+        let markCounter = 1;
 
-        const getSelector = (el) => {
+        const getUniqueSelector = (el, assignedMark) => {
           if (el.id) return "#" + el.id;
+          if (assignedMark) return '[data-omnipilot-mark="' + assignedMark + '"]';
           const tag = el.tagName.toLowerCase();
           const className = el.className && typeof el.className === "string"
-            ? "." + el.className.trim().split(/\\s+/).slice(0, 2).join(".")
+            ? "." + el.className.trim().split(/\\s+/).filter(Boolean).slice(0, 2).join(".")
             : "";
+          if (el.parentElement) {
+            const siblings = Array.from(el.parentElement.children).filter(c => c.tagName === el.tagName);
+            if (siblings.length > 1) {
+              const idx = siblings.indexOf(el) + 1;
+              return tag + className + ":nth-of-type(" + idx + ")";
+            }
+          }
           return tag + className;
         };
 
@@ -138,23 +194,31 @@ export class BrowserDriver {
 
           const rect = el.getBoundingClientRect();
           if (rect.width > 0 && rect.height > 0) {
+            let markId = undefined;
+            if (isInteractive) {
+              markId = markCounter++;
+              el.setAttribute("data-omnipilot-mark", String(markId));
+            }
+
             const attributes = {};
             for (let i = 0; i < el.attributes.length; i++) {
               const attr = el.attributes[i];
-              if (attr && ["id", "name", "type", "role", "aria-label", "placeholder", "href"].includes(attr.name)) {
+              if (attr && ["id", "name", "type", "role", "aria-label", "placeholder", "href", "data-omnipilot-mark"].includes(attr.name)) {
                 attributes[attr.name] = attr.value;
               }
             }
 
-            const textContent = el.innerText || el.textContent || "";
+            const rawVal = el.value !== undefined && el.value !== "" ? String(el.value) : "";
+            const textContent = el.innerText || el.textContent || rawVal || "";
             const cleanText = textContent.trim().slice(0, 100);
 
             elements.push({
-              selector: getSelector(el),
+              selector: getUniqueSelector(el, markId),
+              markId,
               tagName,
               text: cleanText,
               role: el.getAttribute("role") || (interactiveTags.has(tagName) ? tagName.toLowerCase() : undefined),
-              name: el.getAttribute("aria-label") || el.getAttribute("name") || cleanText || undefined,
+              name: el.getAttribute("aria-label") || el.getAttribute("placeholder") || el.getAttribute("name") || cleanText || undefined,
               boundingBox: {
                 x: Math.round(rect.x),
                 y: Math.round(rect.y),
@@ -176,6 +240,82 @@ export class BrowserDriver {
       nodes,
       accessibilityAria,
     };
+  }
+
+  /**
+   * Pre-Flight DOM Inspector: resolves the actual DOM element for a selector
+   * BEFORE clicking or typing so RiskEngine inspects real text, attributes, and form context.
+   */
+  public async inspectTargetSelector(selector: string): Promise<HitTestedElement | null> {
+    const page = await this.ensurePage();
+    try {
+      const info = await page.evaluate(
+        `((sel) => {
+          const el = document.querySelector(sel);
+          if (!el) return null;
+          const rect = el.getBoundingClientRect();
+          const form = el.closest("form");
+          let formSubmitText = "";
+          if (form) {
+            const submitBtns = Array.from(form.querySelectorAll('button, input[type="submit"]'));
+            formSubmitText = submitBtns.map(b => b.innerText || b.value || b.id || "").join(" ");
+          }
+          return {
+            selector: el.id ? "#" + el.id : sel,
+            tagName: el.tagName,
+            text: (el.innerText || el.value || el.textContent || "").trim().slice(0, 120),
+            name: el.getAttribute("aria-label") || el.getAttribute("name") || el.getAttribute("placeholder") || undefined,
+            role: el.getAttribute("role") || el.tagName.toLowerCase(),
+            type: el.getAttribute("type") || undefined,
+            formSubmitText: formSubmitText.trim().slice(0, 120) || undefined,
+            boundingBox: {
+              x: Math.round(rect.x),
+              y: Math.round(rect.y),
+              width: Math.round(rect.width),
+              height: Math.round(rect.height),
+            },
+          };
+        })(${JSON.stringify(selector)})`
+      );
+      return info as HitTestedElement | null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Pre-Flight Coordinate Hit-Testing: discovers the exact DOM element under (x, y)
+   * using document.elementFromPoint(x, y) to prevent coordinate-based safety bypasses.
+   */
+  public async inspectElementAtPoint(x: number, y: number): Promise<HitTestedElement | null> {
+    const page = await this.ensurePage();
+    try {
+      const info = await page.evaluate(
+        `(({ px, py }) => {
+          const rawEl = document.elementFromPoint(px, py);
+          if (!rawEl) return null;
+          const el = rawEl.closest('button, a, input, select, textarea, [role="button"], [onclick]') || rawEl;
+          const rect = el.getBoundingClientRect();
+          return {
+            selector: el.id ? "#" + el.id : el.tagName.toLowerCase(),
+            tagName: el.tagName,
+            text: (el.innerText || el.value || el.textContent || "").trim().slice(0, 120),
+            name: el.getAttribute("aria-label") || el.getAttribute("name") || undefined,
+            role: el.getAttribute("role") || el.tagName.toLowerCase(),
+            type: el.getAttribute("type") || undefined,
+            boundingBox: {
+              x: Math.round(rect.x),
+              y: Math.round(rect.y),
+              width: Math.round(rect.width),
+              height: Math.round(rect.height),
+            },
+          };
+        })({ px: ${Number(x)}, py: ${Number(y)} })`
+      );
+      return info as HitTestedElement | null;
+    } catch {
+      return null;
+    }
   }
 
   public async clickElement(
@@ -250,6 +390,10 @@ export class BrowserDriver {
     };
   }
 
+  public getNetworkMutations(): NetworkMutationEvent[] {
+    return [...this.networkMutations];
+  }
+
   public async getPage(): Promise<Page> {
     return this.ensurePage();
   }
@@ -270,11 +414,17 @@ export class BrowserDriver {
     this.isInitialized = false;
   }
 
-  public getStatus(): { isInitialized: boolean; activeUrl: string; config: BrowserDriverConfig } {
+  public getStatus(): {
+    isInitialized: boolean;
+    activeUrl: string;
+    config: BrowserDriverConfig;
+    networkMutationsRecorded: number;
+  } {
     return {
       isInitialized: this.isInitialized,
       activeUrl: this.activeUrl,
       config: this.config,
+      networkMutationsRecorded: this.networkMutations.length,
     };
   }
 }

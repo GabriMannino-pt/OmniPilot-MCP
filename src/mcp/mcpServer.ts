@@ -5,8 +5,10 @@ import { BrowserDriver } from "../execution/browserDriver.js";
 import { DesktopDriver } from "../execution/desktopDriver.js";
 import { DomEngine } from "../perception/domEngine.js";
 import { VisionEngine } from "../perception/visionEngine.js";
+import { DualPerceptionEngine } from "../perception/dualPerception.js";
 import { RiskEngine } from "../safety/riskEngine.js";
 import { ApprovalGate } from "../safety/approvalGate.js";
+import { AgentRunner } from "../agent/agentRunner.js";
 import { registerAllTools, ToolsContext } from "./handlers/toolsHandler.js";
 import { registerAllResources } from "./handlers/resourcesHandler.js";
 import { registerAllPrompts } from "./handlers/promptsHandler.js";
@@ -27,7 +29,7 @@ export class OmniPilotMcpServer {
 
   constructor(options: OmniPilotServerOptions = {}) {
     const name = options.name ?? "omnipilot-mcp";
-    const version = options.version ?? "0.1.0";
+    const version = options.version ?? "0.2.0";
 
     this.server = new McpServer({
       name,
@@ -38,18 +40,29 @@ export class OmniPilotMcpServer {
     const desktopDriver = options.desktopDriver ?? new DesktopDriver();
     const domEngine = new DomEngine(browserDriver);
     const visionEngine = new VisionEngine(browserDriver, desktopDriver);
+    const dualPerception = new DualPerceptionEngine(domEngine, visionEngine);
     const riskEngine = options.riskEngine ?? new RiskEngine();
     const approvalGate =
       options.approvalGate ??
       new ApprovalGate({ autoApprove: options.autoApprove ?? false });
+    const agentRunner = new AgentRunner(
+      browserDriver,
+      desktopDriver,
+      domEngine,
+      visionEngine,
+      riskEngine,
+      approvalGate
+    );
 
     this.ctx = {
       browserDriver,
       desktopDriver,
       domEngine,
       visionEngine,
+      dualPerception,
       riskEngine,
       approvalGate,
+      agentRunner,
     };
 
     // Register all protocol modules

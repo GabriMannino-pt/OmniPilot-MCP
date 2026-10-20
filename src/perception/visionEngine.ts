@@ -1,3 +1,5 @@
+import * as fs from "node:fs";
+import * as path from "node:path";
 import { BrowserDriver } from "../execution/browserDriver.js";
 import { DesktopDriver } from "../execution/desktopDriver.js";
 import { BoundingBox } from "../mcp/schemas.js";
@@ -7,6 +9,7 @@ export interface ScreenshotResult {
   target: "browser" | "desktop";
   format: "base64" | "path";
   data: string;
+  filePath?: string;
   timestamp: string;
   annotated?: boolean;
 }
@@ -36,10 +39,22 @@ export class VisionEngine {
       base64Data = await VisualAnnotator.annotateImage(base64Data, annotations);
     }
 
+    let savedFilePath: string | undefined = undefined;
+    if (format === "path") {
+      const screenshotsDir = path.resolve(process.cwd(), "screenshots");
+      if (!fs.existsSync(screenshotsDir)) {
+        fs.mkdirSync(screenshotsDir, { recursive: true });
+      }
+      const fileName = `omnipilot_${target}_${Date.now()}.png`;
+      savedFilePath = path.join(screenshotsDir, fileName);
+      fs.writeFileSync(savedFilePath, Buffer.from(base64Data, "base64"));
+    }
+
     return {
       target,
       format,
       data: base64Data,
+      filePath: savedFilePath,
       timestamp,
       annotated: Boolean(annotations && annotations.length > 0),
     };

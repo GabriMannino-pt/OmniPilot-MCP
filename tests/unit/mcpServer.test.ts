@@ -34,17 +34,35 @@ describe("OmniPilotMcpServer (JSON-RPC 2.0 Integration)", () => {
     await server.close();
   });
 
-  it("should expose all 6 specified MCP tools with valid schemas", async () => {
+  it("should expose all 8 MCP tools with valid schemas", async () => {
     const response = await client.listTools();
     const toolNames = response.tools.map((t) => t.name);
 
+    expect(toolNames).toContain("omnipilot_navigate");
     expect(toolNames).toContain("omnipilot_take_screenshot");
     expect(toolNames).toContain("omnipilot_inspect_dom");
     expect(toolNames).toContain("omnipilot_click_element");
     expect(toolNames).toContain("omnipilot_click_coordinate");
     expect(toolNames).toContain("omnipilot_type_text");
     expect(toolNames).toContain("omnipilot_request_approval");
-    expect(response.tools.length).toBe(6);
+    expect(toolNames).toContain("omnipilot_execute_task");
+    expect(response.tools.length).toBe(8);
+  });
+
+  it("should execute omnipilot_navigate to load a page", async () => {
+    const targetUri = "data:text/html;charset=utf-8,<h1>Navigated Page</h1>";
+    const result = await client.callTool({
+      name: "omnipilot_navigate",
+      arguments: {
+        url: targetUri,
+      },
+    });
+
+    const textPart = (result.content as any[]).find((c) => c.type === "text");
+    expect(textPart).toBeDefined();
+    const parsed = JSON.parse(textPart.text);
+    expect(parsed.status).toBe("success");
+    expect(parsed.action).toBe("navigate");
   });
 
   it("should execute omnipilot_take_screenshot and return base64 image", async () => {
@@ -65,7 +83,7 @@ describe("OmniPilotMcpServer (JSON-RPC 2.0 Integration)", () => {
     expect(typeof imagePart.data).toBe("string");
   });
 
-  it("should execute omnipilot_inspect_dom and return DOM/accessibility tree", async () => {
+  it("should execute omnipilot_inspect_dom and return DOM/accessibility tree with Set-of-Mark IDs", async () => {
     const result = await client.callTool({
       name: "omnipilot_inspect_dom",
       arguments: {
@@ -100,8 +118,8 @@ describe("OmniPilotMcpServer (JSON-RPC 2.0 Integration)", () => {
     const result = await client.callTool({
       name: "omnipilot_click_coordinate",
       arguments: {
-        x: 500,
-        y: 250,
+        x: 50,
+        y: 20,
         button: "left",
       },
     });
@@ -110,8 +128,8 @@ describe("OmniPilotMcpServer (JSON-RPC 2.0 Integration)", () => {
     expect(textPart).toBeDefined();
     const parsed = JSON.parse(textPart.text);
     expect(parsed.status).toBe("success");
-    expect(parsed.result.x).toBe(500);
-    expect(parsed.result.y).toBe(250);
+    expect(parsed.result.x).toBe(50);
+    expect(parsed.result.y).toBe(20);
   });
 
   it("should execute omnipilot_type_text for input filling", async () => {
@@ -120,7 +138,7 @@ describe("OmniPilotMcpServer (JSON-RPC 2.0 Integration)", () => {
       arguments: {
         selector: "#order_notes",
         text: "Urgent shipping required",
-        pressEnter: true,
+        pressEnter: false,
       },
     });
 

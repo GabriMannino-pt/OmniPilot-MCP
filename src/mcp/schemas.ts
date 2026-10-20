@@ -24,6 +24,23 @@ export const BoundingBoxSchema = z.object({
 export type BoundingBox = z.infer<typeof BoundingBoxSchema>;
 
 /**
+ * Tool 0: omnipilot_navigate
+ */
+export const NavigateInputSchema = z.object({
+  url: z
+    .string()
+    .min(1)
+    .describe("Target URL or data URI to navigate the browser to"),
+  waitUntil: z
+    .enum(["domcontentloaded", "load", "networkidle"])
+    .optional()
+    .default("domcontentloaded")
+    .describe("Navigation lifecycle event to wait for"),
+});
+
+export type NavigateInput = z.infer<typeof NavigateInputSchema>;
+
+/**
  * Tool 1: omnipilot_take_screenshot
  */
 export const TakeScreenshotInputSchema = z.object({
@@ -34,12 +51,17 @@ export const TakeScreenshotInputSchema = z.object({
   format: z
     .enum(["base64", "path"])
     .default("base64")
-    .describe("Output representation format"),
+    .describe("Output representation format (base64 inline or saved file path)"),
   fullPage: z
     .boolean()
     .optional()
     .default(false)
     .describe("Whether to capture full scrollable page (browser only)"),
+  annotateInteractive: z
+    .boolean()
+    .optional()
+    .default(false)
+    .describe("Overlay Set-of-Mark (SoM) numeric badges on interactive elements"),
 });
 
 export type TakeScreenshotInput = z.infer<typeof TakeScreenshotInputSchema>;
@@ -75,7 +97,13 @@ export const ClickElementInputSchema = z.object({
   selector: z
     .string()
     .min(1)
-    .describe("CSS or XPath selector of the interactive DOM element"),
+    .describe("CSS selector, XPath, or Set-of-Mark selector (e.g. [data-omnipilot-mark='1'])"),
+  markId: z
+    .number()
+    .int()
+    .positive()
+    .optional()
+    .describe("Optional Set-of-Mark numeric ID assigned during DOM/Vision inspection"),
   waitForNavigation: z
     .boolean()
     .optional()
@@ -98,6 +126,11 @@ export type ClickElementInput = z.infer<typeof ClickElementInputSchema>;
 export const ClickCoordinateInputSchema = z.object({
   x: z.number().describe("X screen or canvas coordinate"),
   y: z.number().describe("Y screen or canvas coordinate"),
+  target: z
+    .enum(["browser", "desktop"])
+    .optional()
+    .default("browser")
+    .describe("Whether to click inside the browser viewport or at OS desktop level"),
   button: z
     .enum(["left", "right", "middle"])
     .optional()
@@ -124,6 +157,12 @@ export const TypeTextInputSchema = z.object({
     .string()
     .optional()
     .describe("Optional target DOM element selector to focus before typing"),
+  markId: z
+    .number()
+    .int()
+    .positive()
+    .optional()
+    .describe("Optional Set-of-Mark numeric ID of the input field"),
   pressEnter: z
     .boolean()
     .optional()
@@ -166,3 +205,20 @@ export const RequestApprovalInputSchema = z.object({
 });
 
 export type RequestApprovalInput = z.infer<typeof RequestApprovalInputSchema>;
+
+/**
+ * Tool 7: omnipilot_execute_task (Autonomous Natural Language Goal Runner)
+ */
+export const ExecuteTaskInputSchema = z.object({
+  goal: z
+    .string()
+    .min(1)
+    .describe("High-level natural language instruction (e.g. 'Invia un'email di benvenuto a mariorossi@gmail.com')"),
+  language: z
+    .enum(["it", "en"])
+    .optional()
+    .default("it")
+    .describe("Preferred reporting language (it or en)"),
+});
+
+export type ExecuteTaskInput = z.infer<typeof ExecuteTaskInputSchema>;

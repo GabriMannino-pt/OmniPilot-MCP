@@ -1,30 +1,124 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import {
+  NavigateInputSchema,
   TakeScreenshotInputSchema,
   InspectDomInputSchema,
   ClickElementInputSchema,
   ClickCoordinateInputSchema,
   TypeTextInputSchema,
   RequestApprovalInputSchema,
+  ExecuteTaskInputSchema,
   RiskTier,
 } from "../schemas.js";
 import { BrowserDriver } from "../../execution/browserDriver.js";
 import { DesktopDriver } from "../../execution/desktopDriver.js";
 import { DomEngine } from "../../perception/domEngine.js";
 import { VisionEngine } from "../../perception/visionEngine.js";
+import { DualPerceptionEngine } from "../../perception/dualPerception.js";
 import { RiskEngine } from "../../safety/riskEngine.js";
 import { ApprovalGate } from "../../safety/approvalGate.js";
+import { AgentRunner } from "../../agent/agentRunner.js";
 
 export interface ToolsContext {
   browserDriver: BrowserDriver;
   desktopDriver: DesktopDriver;
   domEngine: DomEngine;
   visionEngine: VisionEngine;
+  dualPerception: DualPerceptionEngine;
   riskEngine: RiskEngine;
   approvalGate: ApprovalGate;
+  agentRunner: AgentRunner;
 }
 
 export function registerAllTools(server: McpServer, ctx: ToolsContext): void {
+  /**
+   * Tool 0: omnipilot_navigate
+   */
+  server.registerTool(
+    "omnipilot_navigate",
+    {
+      title: "OmniPilot Navigate URL",
+      description:
+        "Navigates the active browser session to a target URL or web application.",
+      inputSchema: NavigateInputSchema.shape,
+    },
+    async (args) => {
+      const startTime = Date.now();
+      const risk = ctx.riskEngine.evaluateAction({
+        toolName: "omnipilot_navigate",
+        params: args,
+      });
+
+      if (risk.requiresHITL) {
+        const approval = await ctx.approvalGate.requestApproval(
+          `Navigate to sensitive URI: ${args.url} (${risk.reason})`,
+          risk.tier,
+          undefined,
+          { url: args.url }
+        );
+        if (!approval.approved) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify({
+                  status: "rejected",
+                  reason: "Navigation blocked by HITL safety policy",
+                }),
+              },
+            ],
+            isError: true,
+          };
+        }
+      }
+
+      try {
+        const finalUrl = await ctx.browserDriver.navigate(args.url, args.waitUntil);
+        ctx.approvalGate.recordAuditLog({
+          toolName: "omnipilot_navigate",
+          params: args,
+          tier: risk.tier,
+          requiresHITL: risk.requiresHITL,
+          executionDurationMs: Date.now() - startTime,
+          success: true,
+        });
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                status: "success",
+                action: "navigate",
+                activeUrl: finalUrl,
+                tier: RiskTier[risk.tier],
+              }),
+            },
+          ],
+        };
+      } catch (err: any) {
+        ctx.approvalGate.recordAuditLog({
+          toolName: "omnipilot_navigate",
+          params: args,
+          tier: risk.tier,
+          requiresHITL: risk.requiresHITL,
+          executionDurationMs: Date.now() - startTime,
+          success: false,
+          error: err.message,
+        });
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Error navigating to "${args.url}": ${err.message}`,
+            },
+          ],
+          isError: true,
+        };
+      }
+    }
+  );
+
   /**
    * Tool 1: omnipilot_take_screenshot
    */
@@ -33,7 +127,7 @@ export function registerAllTools(server: McpServer, ctx: ToolsContext): void {
     {
       title: "OmniPilot Take Screenshot",
       description:
-        "Scatta uno screenshot istantaneo dello schermo desktop o della scheda browser attiva.",
+        "Captures an instant screenshot of the active browser tab or desktop display, optionally annotated with Set-of-Mark (SoM) badges.",
       inputSchema: TakeScreenshotInputSchema.shape,
     },
     async (args) => {
@@ -44,11 +138,20 @@ export function registerAllTools(server: McpServer, ctx: ToolsContext): void {
       });
 
       try {
-        const result = await ctx.visionEngine.capture(
-          args.target,
-          args.format,
-          args.fullPage
-        );
+        let result;
+        if (args.annotateInteractive && args.target === "browser") {
+          const snap = await ctx.dualPerception.getSnapshot({
+            target: "browser",
+            annotateInteractive: true,
+          });
+          result = snap.screenshot;
+        } else {
+          result = await ctx.visionEngine.capture(
+            args.target,
+            args.format,
+            args.fullPage
+          );
+        }
 
         ctx.approvalGate.recordAuditLog({
           toolName: "omnipilot_take_screenshot",
@@ -72,6 +175,7 @@ export function registerAllTools(server: McpServer, ctx: ToolsContext): void {
                 text: JSON.stringify({
                   status: "success",
                   target: args.target,
+                  annotated: result.annotated ?? false,
                   timestamp: result.timestamp,
                   tier: RiskTier[risk.tier],
                 }),
@@ -87,7 +191,7 @@ export function registerAllTools(server: McpServer, ctx: ToolsContext): void {
                   status: "success",
                   target: args.target,
                   format: "path",
-                  filePath: result.data,
+                  filePath: result.filePath,
                   timestamp: result.timestamp,
                   tier: RiskTier[risk.tier],
                 }),
@@ -124,9 +228,9 @@ export function registerAllTools(server: McpServer, ctx: ToolsContext): void {
   server.registerTool(
     "omnipilot_inspect_dom",
     {
-      title: "OmniPilot Inspect DOM",
+      title: "OmniPilot Inspect DOM & Set-of-Mark",
       description:
-        "Estrae l'albero di accessibilità semantico del DOM (ruoli, etichette ARIA, coordinate bounding box).",
+        "Extracts the semantic ARIA accessibility tree and interactive DOM elements with Set-of-Mark (markId) and bounding boxes.",
       inputSchema: InspectDomInputSchema.shape,
     },
     async (args) => {
@@ -198,29 +302,60 @@ export function registerAllTools(server: McpServer, ctx: ToolsContext): void {
     {
       title: "OmniPilot Click DOM Element",
       description:
-        "Esegue un click deterministico su un elemento del DOM garantendo il corretto trigger degli eventi JavaScript.",
+        "Deterministically clicks a DOM element by CSS selector or Set-of-Mark ID, performing pre-flight DOM safety inspection.",
       inputSchema: ClickElementInputSchema.shape,
     },
     async (args) => {
       const startTime = Date.now();
+      const effectiveSelector = args.markId
+        ? `[data-omnipilot-mark="${args.markId}"]`
+        : args.selector;
+
+      // Pre-Flight DOM Inspection to read actual button text, attributes, and bounding box
+      const [hitElement, urlContext] = await Promise.all([
+        ctx.browserDriver.inspectTargetSelector(effectiveSelector),
+        ctx.browserDriver.getActiveUrl(),
+      ]);
+
       const risk = ctx.riskEngine.evaluateAction({
         toolName: "omnipilot_click_element",
-        params: args,
+        params: { ...args, selector: effectiveSelector },
+        urlContext,
+        hitElement,
       });
 
       // Human-In-The-Loop gate check if escalated to Tier 3
       if (risk.requiresHITL) {
+        let annotatedScreenshot: string | undefined = undefined;
+        const targetBox = hitElement?.boundingBox;
+        if (targetBox) {
+          try {
+            const cap = await ctx.visionEngine.capture("browser", "base64", false, [
+              {
+                box: targetBox,
+                label: `🛑 TIER 3 HITL: ${hitElement?.text || effectiveSelector}`,
+                color: "#ef4444",
+              },
+            ]);
+            annotatedScreenshot = cap.data;
+          } catch {
+            // Non-blocking fallback
+          }
+        }
+
         const approval = await ctx.approvalGate.requestApproval(
-          `Click on critical DOM element: "${args.selector}" (${risk.reason})`,
+          `Click on critical DOM element "${hitElement?.text || effectiveSelector}" (${risk.reason})`,
           risk.tier,
+          targetBox,
+          { selector: effectiveSelector, hitElement, risk },
           undefined,
-          { selector: args.selector, risk }
+          annotatedScreenshot
         );
 
         if (!approval.approved) {
           ctx.approvalGate.recordAuditLog({
             toolName: "omnipilot_click_element",
-            params: args,
+            params: { ...args, selector: effectiveSelector },
             tier: risk.tier,
             requiresHITL: true,
             approvalStatus: "rejected",
@@ -247,13 +382,13 @@ export function registerAllTools(server: McpServer, ctx: ToolsContext): void {
 
       try {
         const result = await ctx.browserDriver.clickElement(
-          args.selector,
+          effectiveSelector,
           args.waitForNavigation
         );
 
         ctx.approvalGate.recordAuditLog({
           toolName: "omnipilot_click_element",
-          params: args,
+          params: { ...args, selector: effectiveSelector },
           tier: risk.tier,
           requiresHITL: risk.requiresHITL,
           approvalStatus: risk.requiresHITL ? "approved" : "none",
@@ -277,7 +412,7 @@ export function registerAllTools(server: McpServer, ctx: ToolsContext): void {
       } catch (err: any) {
         ctx.approvalGate.recordAuditLog({
           toolName: "omnipilot_click_element",
-          params: args,
+          params: { ...args, selector: effectiveSelector },
           tier: risk.tier,
           requiresHITL: risk.requiresHITL,
           executionDurationMs: Date.now() - startTime,
@@ -288,7 +423,7 @@ export function registerAllTools(server: McpServer, ctx: ToolsContext): void {
           content: [
             {
               type: "text",
-              text: `Error clicking element "${args.selector}": ${err.message}`,
+              text: `Error clicking element "${effectiveSelector}": ${err.message}`,
             },
           ],
           isError: true,
@@ -305,29 +440,112 @@ export function registerAllTools(server: McpServer, ctx: ToolsContext): void {
     {
       title: "OmniPilot Click Coordinates",
       description:
-        "Muove il cursore virtuale alle coordinate XY ed esegue il click a livello OS/Canvas.",
+        "Moves the cursor to (X, Y) coordinates and clicks, performing pre-flight DOM hit-testing on browser targets to prevent safety bypasses.",
       inputSchema: ClickCoordinateInputSchema.shape,
     },
     async (args) => {
       const startTime = Date.now();
+      const target = args.target ?? "browser";
+
+      // Pre-Flight Coordinate Hit-Testing inside browser
+      let hitElement = null;
+      let urlContext: string | undefined = undefined;
+      if (target === "browser") {
+        [hitElement, urlContext] = await Promise.all([
+          ctx.browserDriver.inspectElementAtPoint(args.x, args.y),
+          ctx.browserDriver.getActiveUrl(),
+        ]);
+      }
+
       const risk = ctx.riskEngine.evaluateAction({
         toolName: "omnipilot_click_coordinate",
         params: args,
+        urlContext,
+        hitElement,
       });
 
-      try {
-        const result = await ctx.desktopDriver.clickCoordinate(
-          args.x,
-          args.y,
-          args.button,
-          args.clickCount
+      if (risk.requiresHITL) {
+        const targetBox = hitElement?.boundingBox || {
+          x: Math.max(0, args.x - 40),
+          y: Math.max(0, args.y - 20),
+          width: 80,
+          height: 40,
+        };
+
+        let annotatedScreenshot: string | undefined = undefined;
+        try {
+          const cap = await ctx.visionEngine.capture(target, "base64", false, [
+            {
+              box: targetBox,
+              label: `🛑 TIER 3 HITL @ (${args.x}, ${args.y})`,
+              color: "#ef4444",
+            },
+          ]);
+          annotatedScreenshot = cap.data;
+        } catch {
+          // Non-blocking fallback
+        }
+
+        const approval = await ctx.approvalGate.requestApproval(
+          `Coordinate click at (${args.x}, ${args.y}) hits critical target "${hitElement?.text || hitElement?.selector || "element"}" (${risk.reason})`,
+          risk.tier,
+          targetBox,
+          { x: args.x, y: args.y, hitElement, risk },
+          undefined,
+          annotatedScreenshot
         );
+
+        if (!approval.approved) {
+          ctx.approvalGate.recordAuditLog({
+            toolName: "omnipilot_click_coordinate",
+            params: args,
+            tier: risk.tier,
+            requiresHITL: true,
+            approvalStatus: "rejected",
+            executionDurationMs: Date.now() - startTime,
+            success: false,
+            error: "Coordinate click blocked by HITL safety policy",
+          });
+
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify({
+                  status: "rejected",
+                  reason: "Coordinate click blocked by HITL safety policy",
+                  details: risk.reason,
+                  hitElement,
+                }),
+              },
+            ],
+            isError: true,
+          };
+        }
+      }
+
+      try {
+        const result =
+          target === "browser"
+            ? await ctx.browserDriver.clickCoordinate(
+                args.x,
+                args.y,
+                args.button,
+                args.clickCount
+              )
+            : await ctx.desktopDriver.clickCoordinate(
+                args.x,
+                args.y,
+                args.button,
+                args.clickCount
+              );
 
         ctx.approvalGate.recordAuditLog({
           toolName: "omnipilot_click_coordinate",
           params: args,
           tier: risk.tier,
-          requiresHITL: false,
+          requiresHITL: risk.requiresHITL,
+          approvalStatus: risk.requiresHITL ? "approved" : "none",
           executionDurationMs: Date.now() - startTime,
           success: true,
         });
@@ -339,7 +557,9 @@ export function registerAllTools(server: McpServer, ctx: ToolsContext): void {
               text: JSON.stringify({
                 status: "success",
                 action: "click_coordinate",
+                target,
                 result,
+                hitElement,
                 tier: RiskTier[risk.tier],
               }),
             },
@@ -350,7 +570,7 @@ export function registerAllTools(server: McpServer, ctx: ToolsContext): void {
           toolName: "omnipilot_click_coordinate",
           params: args,
           tier: risk.tier,
-          requiresHITL: false,
+          requiresHITL: risk.requiresHITL,
           executionDurationMs: Date.now() - startTime,
           success: false,
           error: err.message,
@@ -376,22 +596,35 @@ export function registerAllTools(server: McpServer, ctx: ToolsContext): void {
     {
       title: "OmniPilot Type Text",
       description:
-        "Digita testo simulando la pressione di tasti umani o compilando direttamente input di form.",
+        "Types text or fills form inputs deterministically, checking form submission context when pressEnter is enabled.",
       inputSchema: TypeTextInputSchema.shape,
     },
     async (args) => {
       const startTime = Date.now();
+      const effectiveSelector = args.markId
+        ? `[data-omnipilot-mark="${args.markId}"]`
+        : args.selector;
+
+      const [hitElement, urlContext] = await Promise.all([
+        effectiveSelector
+          ? ctx.browserDriver.inspectTargetSelector(effectiveSelector)
+          : Promise.resolve(null),
+        ctx.browserDriver.getActiveUrl(),
+      ]);
+
       const risk = ctx.riskEngine.evaluateAction({
         toolName: "omnipilot_type_text",
-        params: args,
+        params: { ...args, selector: effectiveSelector },
+        urlContext,
+        hitElement,
       });
 
       if (risk.requiresHITL) {
         const approval = await ctx.approvalGate.requestApproval(
-          `Type sensitive text or credential (${risk.reason})`,
+          `Type sensitive text or submit critical form (${risk.reason})`,
           risk.tier,
-          undefined,
-          { isSecret: args.isSecret, selector: args.selector }
+          hitElement?.boundingBox,
+          { isSecret: args.isSecret, selector: effectiveSelector, pressEnter: args.pressEnter }
         );
 
         if (!approval.approved) {
@@ -413,6 +646,7 @@ export function registerAllTools(server: McpServer, ctx: ToolsContext): void {
                 text: JSON.stringify({
                   status: "rejected",
                   reason: "Text typing blocked by HITL safety policy",
+                  details: risk.reason,
                 }),
               },
             ],
@@ -424,7 +658,7 @@ export function registerAllTools(server: McpServer, ctx: ToolsContext): void {
       try {
         const result = await ctx.browserDriver.typeText(
           args.text,
-          args.selector,
+          effectiveSelector,
           args.pressEnter,
           args.clearExisting
         );
@@ -483,13 +717,13 @@ export function registerAllTools(server: McpServer, ctx: ToolsContext): void {
     {
       title: "OmniPilot Request Approval",
       description:
-        "Guardrail HITL: Sospende l'esecuzione, genera una richiesta di autorizzazione esplicita con bounding box per azioni Tier 3 critiche.",
+        "HITL Guardrail: Suspends execution, generates an annotated frame with a red bounding box on the target element, and awaits human confirmation.",
       inputSchema: RequestApprovalInputSchema.shape,
     },
     async (args) => {
       const startTime = Date.now();
 
-      // Optionally capture annotated visual frame with red bounding box
+      // Capture annotated visual frame with red bounding box
       let annotatedFrame: string | undefined = undefined;
       if (args.boundingBox) {
         try {
@@ -510,7 +744,9 @@ export function registerAllTools(server: McpServer, ctx: ToolsContext): void {
         args.actionSummary,
         args.tier,
         args.boundingBox,
-        args.contextDetails
+        args.contextDetails,
+        undefined,
+        annotatedFrame
       );
 
       ctx.approvalGate.recordAuditLog({
@@ -546,6 +782,43 @@ export function registerAllTools(server: McpServer, ctx: ToolsContext): void {
       return {
         content: contents,
       };
+    }
+  );
+
+  /**
+   * Tool 7: omnipilot_execute_task (Autonomous Goal Runner)
+   */
+  server.registerTool(
+    "omnipilot_execute_task",
+    {
+      title: "OmniPilot Execute Autonomous Task",
+      description:
+        "Executes a complete high-level instruction in natural language (e.g. 'Invia un'email di benvenuto a mariorossi@gmail.com') with automatic 3-Tier HITL protection.",
+      inputSchema: ExecuteTaskInputSchema.shape,
+    },
+    async (args) => {
+      try {
+        const taskState = await ctx.agentRunner.executeTask(args.goal, args.language);
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(taskState, null, 2),
+            },
+          ],
+          isError: taskState.status === "failed" || taskState.status === "rejected",
+        };
+      } catch (err: any) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Error executing autonomous task "${args.goal}": ${err.message}`,
+            },
+          ],
+          isError: true,
+        };
+      }
     }
   );
 }

@@ -25,7 +25,7 @@ export class DashboardServer {
       path.resolve(process.cwd(), "web-dashboard", "dist");
 
     const ctx = this.mcpServer.getContext();
-    this.dualEngine = new DualPerceptionEngine(ctx.domEngine, ctx.visionEngine);
+    this.dualEngine = ctx.dualPerception;
   }
 
   public async start(): Promise<number> {
@@ -57,8 +57,41 @@ export class DashboardServer {
               desktop: ctx.desktopDriver.getDisplayResolution(),
               pendingApprovalsCount: ctx.approvalGate.getPendingRequests().length,
               totalAuditLogs: ctx.approvalGate.getAuditLogs().length,
+              currentTask: ctx.agentRunner.getCurrentTask(),
             };
             this.sendJson(res, 200, status);
+            return;
+          }
+
+          if (pathname === "/api/tasks/current" && req.method === "GET") {
+            this.sendJson(res, 200, {
+              task: ctx.agentRunner.getCurrentTask(),
+            });
+            return;
+          }
+
+          if (pathname === "/api/tasks/execute" && req.method === "POST") {
+            const body = await this.readJsonBody(req);
+            const goal = String(body?.goal || "").trim();
+            const language = body?.language === "en" ? "en" : "it";
+
+            if (!goal) {
+              this.sendJson(res, 400, { error: "Missing 'goal' instruction" });
+              return;
+            }
+
+            // Launch task asynchronously so UI can observe live steps & approve HITL
+            ctx.agentRunner.executeTask(goal, language).catch((err) => {
+              console.error("[OmniPilot AgentRunner] Task error:", err);
+            });
+
+            // Wait briefly so initial task state is populated
+            await new Promise((r) => setTimeout(r, 50));
+
+            this.sendJson(res, 200, {
+              started: true,
+              task: ctx.agentRunner.getCurrentTask(),
+            });
             return;
           }
 
@@ -84,7 +117,11 @@ export class DashboardServer {
             return;
           }
 
-          if (pathname.startsWith("/api/approvals/") && pathname.endsWith("/resolve") && req.method === "POST") {
+          if (
+            pathname.startsWith("/api/approvals/") &&
+            pathname.endsWith("/resolve") &&
+            req.method === "POST"
+          ) {
             const parts = pathname.split("/");
             const requestId = parts[3];
             const body = await this.readJsonBody(req);
@@ -121,7 +158,7 @@ export class DashboardServer {
       });
 
       this.server.listen(this.port, () => {
-        console.log(`[OmniPilot Dashboard] Server listening on http://localhost:${this.port}`);
+        console.error(`[OmniPilot Dashboard] Server listening on http://localhost:${this.port}`);
         resolve(this.port);
       });
 
@@ -167,7 +204,6 @@ export class DashboardServer {
 
   private serveStatic(_req: http.IncomingMessage, res: http.ServerResponse, pathname: string): void {
     if (!fs.existsSync(this.staticDir)) {
-      // Fallback simple HTML status page if web-dashboard/dist is not yet built
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
       res.end(`
         <!DOCTYPE html>
@@ -188,6 +224,7 @@ export class DashboardServer {
               <p>API endpoints active:</p>
               <ul>
                 <li><a href="/api/status">/api/status</a></li>
+                <li><a href="/api/tasks/current">/api/tasks/current</a></li>
                 <li><a href="/api/screenshot?annotate=true">/api/screenshot?annotate=true</a></li>
                 <li><a href="/api/approvals">/api/approvals</a></li>
                 <li><a href="/api/audit-logs">/api/audit-logs</a></li>

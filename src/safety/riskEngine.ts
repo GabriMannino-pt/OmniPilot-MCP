@@ -1,10 +1,22 @@
 import { RiskTier, BoundingBox } from "../mcp/schemas.js";
 
+export interface HitTestedElement {
+  selector?: string;
+  tagName?: string;
+  text?: string;
+  name?: string;
+  role?: string;
+  type?: string;
+  formSubmitText?: string;
+  boundingBox?: BoundingBox;
+}
+
 export interface ActionPayload {
   toolName: string;
   params: Record<string, any>;
   urlContext?: string;
   elementText?: string;
+  hitElement?: HitTestedElement | null;
 }
 
 export interface RiskRule {
@@ -26,12 +38,15 @@ export interface RiskEvaluation {
 
 /**
  * Built-in sensitive action patterns (Italian & English)
+ * Matched using token-boundary rules to prevent substring false positives (e.g. 'border' != 'order')
  */
 const CRITICAL_KEYWORDS = [
   // Deletion / Destruction
   "delete",
   "cancella",
+  "cancellazione",
   "elimina",
+  "eliminazione",
   "rimuovi",
   "remove",
   "destroy",
@@ -39,6 +54,7 @@ const CRITICAL_KEYWORDS = [
   "truncate",
   "terminate",
   "purge",
+  "wipe",
 
   // Financial & Orders
   "pay",
@@ -57,8 +73,10 @@ const CRITICAL_KEYWORDS = [
   "ordine",
   "invoice",
   "fattura",
+  "addebito",
+  "charge",
 
-  // Irreversible External Communication
+  // Irreversible External Communication & Submission
   "send",
   "invia",
   "spedisci",
@@ -67,6 +85,9 @@ const CRITICAL_KEYWORDS = [
   "publish",
   "pubblica",
   "post",
+  "submit",
+  "conferma",
+  "confirm",
 
   // System & Security modifications
   "revoke",
@@ -79,14 +100,29 @@ const CRITICAL_KEYWORDS = [
 ];
 
 const SENSITIVE_URL_PATTERNS = [
-  /checkout/i,
-  /payment/i,
-  /pagamento/i,
-  /bonifico/i,
-  /banking/i,
-  /admin\/delete/i,
-  /cart\/submit/i,
+  /\bcheckout\b/i,
+  /\bpayment\b/i,
+  /\bpagamento\b/i,
+  /\bbonifico\b/i,
+  /\bbanking\b/i,
+  /\badmin\/delete\b/i,
+  /\bcart\/submit\b/i,
 ];
+
+/**
+ * Checks if `text` contains `keyword` as a distinct word/token
+ * (splits camelCase and treats -, _, ., #, /, spaces as token delimiters,
+ * avoiding Scunthorpe false positives like '#border-box' matching 'order')
+ */
+function containsToken(text: string, keyword: string): boolean {
+  // Normalize camelCase -> spaces
+  const normalized = text.replace(/([a-z])([A-Z])/g, "$1 $2").toLowerCase();
+  const escaped = keyword
+    .toLowerCase()
+    .replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const regex = new RegExp(`(?:^|[^a-z0-9])${escaped}(?:$|[^a-z0-9])`, "i");
+  return regex.test(normalized);
+}
 
 export class RiskEngine {
   private customKeywords: Set<string>;
@@ -110,7 +146,7 @@ export class RiskEngine {
    * Evaluates the risk tier for a requested tool action
    */
   public evaluateAction(action: ActionPayload): RiskEvaluation {
-    const { toolName, params, urlContext, elementText } = action;
+    const { toolName, params, urlContext, elementText, hitElement } = action;
     const matchedRules: string[] = [];
     const sensitiveTokens: string[] = [];
 
@@ -135,6 +171,7 @@ export class RiskEngine {
             reason: rule.reason,
             requiresHITL: true,
             matchedRules,
+            suggestedBoundingBox: hitElement?.boundingBox,
           };
         }
       }
@@ -153,8 +190,40 @@ export class RiskEngine {
       };
     }
 
-    // 4. Sensitive URL Context Check (e.g., executing mutations on banking/checkout pages)
-    if (urlContext) {
+    // 4. Navigation check (Safe unless dangerous scheme like javascript:)
+    if (toolName === "omnipilot_navigate") {
+      const targetUrl = String(params.url || "");
+      if (/^\s*javascript:/i.test(targetUrl)) {
+        return {
+          tier: RiskTier.TIER_3_CRITICAL,
+          reason: "Blocked potentially unsafe javascript: URI navigation",
+          requiresHITL: true,
+          matchedRules: ["rule:unsafe_navigation_scheme"],
+          sensitiveTokensFound: ["javascript:"],
+        };
+      }
+      return {
+        tier: RiskTier.TIER_1_SAFE,
+        reason: "Standard browser page navigation",
+        requiresHITL: false,
+        matchedRules: ["rule:navigation_safe"],
+      };
+    }
+
+    // 5. Secret credentials or passwords (or typing into a password input field)
+    if (params.isSecret === true || hitElement?.type === "password") {
+      return {
+        tier: RiskTier.TIER_3_CRITICAL,
+        reason: "Secret credential / sensitive token input detected",
+        requiresHITL: true,
+        matchedRules: ["rule:secret_credential_masking"],
+        sensitiveTokensFound: ["isSecret: true"],
+        suggestedBoundingBox: hitElement?.boundingBox,
+      };
+    }
+
+    // 6. Sensitive URL Context Check (only when clicking submit/buttons or submitting via Enter)
+    if (urlContext && (toolName !== "omnipilot_type_text" || params.pressEnter === true)) {
       for (const pattern of SENSITIVE_URL_PATTERNS) {
         if (pattern.test(urlContext)) {
           matchedRules.push(`url_pattern:${pattern.source}`);
@@ -163,45 +232,48 @@ export class RiskEngine {
       }
     }
 
-    // 5. Selector text inspection
-    if (typeof params.selector === "string") {
-      const lower = params.selector.toLowerCase();
+    // 7. Selector inspection (only for click actions or pressEnter submits; typing into a draft field shouldn't fail just because the form exists)
+    if (typeof params.selector === "string" && (toolName === "omnipilot_click_element" || params.pressEnter === true)) {
       for (const keyword of this.customKeywords) {
-        if (lower.includes(keyword)) {
+        if (containsToken(params.selector, keyword)) {
           sensitiveTokens.push(`selector contains '${keyword}'`);
         }
       }
-    }
-
-    // 6. Direct element text inspection if provided
-    if (elementText) {
-      const lower = elementText.toLowerCase();
-      for (const keyword of this.customKeywords) {
-        if (lower.includes(keyword)) {
-          sensitiveTokens.push(`element text contains '${keyword}'`);
+    } else if (typeof params.selector === "string" && toolName === "omnipilot_type_text") {
+      // For typing without Enter, still check if the input selector itself is a critical credential/card field
+      for (const kw of ["cvv", "cvc", "iban", "card", "carta", "password", "pin", "secret", "token"]) {
+        if (containsToken(params.selector, kw)) {
+          sensitiveTokens.push(`sensitive input selector '${kw}'`);
         }
       }
     }
 
-    // 7. Text payload inspection (for typing)
+    // 8. Pre-Flight DOM Hit-Test Element Inspection (catches obfuscated CSS selectors & XY coordinate clicks!)
+    const combinedElementText = [
+      elementText,
+      hitElement?.text,
+      hitElement?.name,
+      hitElement?.selector,
+      params.pressEnter ? hitElement?.formSubmitText : undefined,
+    ]
+      .filter(Boolean)
+      .join(" ");
+
+    if (combinedElementText && (toolName === "omnipilot_click_element" || toolName === "omnipilot_click_coordinate" || params.pressEnter === true)) {
+      for (const keyword of this.customKeywords) {
+        if (containsToken(combinedElementText, keyword)) {
+          sensitiveTokens.push(`target element contains '${keyword}'`);
+        }
+      }
+    }
+
+    // 9. Text payload inspection (for destructive commands typed directly)
     if (typeof params.text === "string" && !params.isSecret) {
-      const lower = params.text.toLowerCase();
-      for (const keyword of this.customKeywords) {
-        if (lower.includes(keyword)) {
-          sensitiveTokens.push(`typed text contains '${keyword}'`);
+      for (const keyword of ["delete", "cancella", "elimina", "drop", "truncate", "destroy", "wipe", "purge"]) {
+        if (containsToken(params.text, keyword)) {
+          sensitiveTokens.push(`input text contains '${keyword}'`);
         }
       }
-    }
-
-    // 8. Secret credentials or passwords
-    if (params.isSecret === true) {
-      return {
-        tier: RiskTier.TIER_3_CRITICAL,
-        reason: "Secret credential / sensitive token input detected",
-        requiresHITL: true,
-        matchedRules: ["rule:secret_credential_masking"],
-        sensitiveTokensFound: ["isSecret: true"],
-      };
     }
 
     // If critical tokens were matched, escalate to Tier 3
@@ -210,12 +282,13 @@ export class RiskEngine {
         tier: RiskTier.TIER_3_CRITICAL,
         reason: `Potential irreversible action detected: ${sensitiveTokens.join(", ")}`,
         requiresHITL: true,
-        matchedRules: ["rule:keyword_intent_escalation", ...matchedRules],
+        matchedRules: ["rule:semantic_intent_escalation", ...matchedRules],
         sensitiveTokensFound: sensitiveTokens,
+        suggestedBoundingBox: hitElement?.boundingBox,
       };
     }
 
-    // 9. Standard mutating actions -> Tier 2 (Low Risk / Recoverable)
+    // 10. Standard mutating actions -> Tier 2 (Low Risk / Recoverable)
     if (
       toolName === "omnipilot_click_element" ||
       toolName === "omnipilot_click_coordinate" ||
