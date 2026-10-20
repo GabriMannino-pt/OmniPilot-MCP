@@ -1,4 +1,5 @@
 import { EventEmitter } from "node:events";
+import * as readline from "node:readline";
 import { BoundingBox } from "../mcp/schemas.js";
 
 export interface ApprovalRequest {
@@ -24,23 +25,36 @@ export interface AuditLogEntry {
   error?: string;
 }
 
+export interface ApprovalGateOptions {
+  autoApprove?: boolean;
+  timeoutMs?: number;
+  enableCliPrompt?: boolean;
+}
+
 export class ApprovalGate extends EventEmitter {
-  private pendingRequests: Map<string, {
-    request: ApprovalRequest;
-    resolve: (approved: boolean) => void;
-  }> = new Map();
+  private pendingRequests: Map<
+    string,
+    {
+      request: ApprovalRequest;
+      resolve: (approved: boolean) => void;
+    }
+  > = new Map();
 
   private auditLogs: AuditLogEntry[] = [];
   private autoApprove: boolean = false;
   private defaultTimeoutMs: number = 30000;
+  private enableCliPrompt: boolean = false;
 
-  constructor(options?: { autoApprove?: boolean; timeoutMs?: number }) {
+  constructor(options?: ApprovalGateOptions) {
     super();
     if (options?.autoApprove !== undefined) {
       this.autoApprove = options.autoApprove;
     }
     if (options?.timeoutMs !== undefined) {
       this.defaultTimeoutMs = options.timeoutMs;
+    }
+    if (options?.enableCliPrompt !== undefined) {
+      this.enableCliPrompt = options.enableCliPrompt;
     }
   }
 
@@ -96,6 +110,36 @@ export class ApprovalGate extends EventEmitter {
       });
 
       this.emit("approval:requested", { ...request });
+
+      // If interactive CLI prompt is enabled and running in terminal
+      if (this.enableCliPrompt && process.stdin.isTTY) {
+        this.promptInCli(request);
+      }
+    });
+  }
+
+  /**
+   * Interactive CLI prompt for human terminal operators
+   */
+  private promptInCli(request: ApprovalRequest): void {
+    const rl = readline.createInterface({
+      input: process.stdin,
+      output: process.stdout,
+    });
+
+    console.log("\n=======================================================");
+    console.log("🛑 [HITL CONFIRMATION REQUIRED]");
+    console.log(`Action: ${request.actionSummary}`);
+    console.log(`Risk Tier: ${request.tier} (Critical / Irreversible)`);
+    if (request.boundingBox) {
+      console.log(`Target Coordinates: (${request.boundingBox.x}, ${request.boundingBox.y}) [${request.boundingBox.width}x${request.boundingBox.height}px]`);
+    }
+    console.log("=======================================================");
+
+    rl.question("👉 Do you authorize this action? [y/N]: ", (answer) => {
+      rl.close();
+      const approved = answer.trim().toLowerCase() === "y" || answer.trim().toLowerCase() === "yes";
+      this.resolveApproval(request.id, approved);
     });
   }
 
@@ -123,8 +167,19 @@ export class ApprovalGate extends EventEmitter {
     return log;
   }
 
-  public getAuditLogs(): AuditLogEntry[] {
-    return [...this.auditLogs];
+  public getAuditLogs(filter?: { tier?: number; successOnly?: boolean }): AuditLogEntry[] {
+    let logs = [...this.auditLogs];
+    if (filter?.tier !== undefined) {
+      logs = logs.filter((l) => l.tier === filter.tier);
+    }
+    if (filter?.successOnly) {
+      logs = logs.filter((l) => l.success);
+    }
+    return logs;
+  }
+
+  public exportAuditLogsJson(): string {
+    return JSON.stringify(this.auditLogs, null, 2);
   }
 
   public getPendingRequests(): ApprovalRequest[] {
