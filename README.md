@@ -3,43 +3,111 @@
 > **Autonomous Cross-Platform Executive Agent for Browser & Desktop Operations via Model Context Protocol (MCP)**
 
 [![CI Pipeline](https://github.com/GabriMannino-pt/OmniPilot-MCP/actions/workflows/ci.yml/badge.svg)](https://github.com/GabriMannino-pt/OmniPilot-MCP/actions)
-[![TypeScript](https://img.shields.io/badge/TypeScript-5.7-blue?logo=typescript)](https://www.typescriptlang.org/)
+[![TypeScript Strict](https://img.shields.io/badge/TypeScript-5.7%20Strict-blue?logo=typescript)](https://www.typescriptlang.org/)
 [![Node.js](https://img.shields.io/badge/Node.js-%3E%3D20-green?logo=node.js)](https://nodejs.org/)
-[![Protocol](https://img.shields.io/badge/MCP-2024--11--05-orange)](https://modelcontextprotocol.io/)
+[![Protocol](https://img.shields.io/badge/MCP-2024--11--05-orange?logo=json)](https://modelcontextprotocol.io/)
+[![Playwright](https://img.shields.io/badge/Playwright-Chromium%20Headless-45ba4b?logo=playwright)](https://playwright.dev/)
+[![React 19](https://img.shields.io/badge/Dashboard-React%20%2B%20Vite-61dafb?logo=react)](https://vitejs.dev/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 ---
 
-## 💡 Overview
+## 🌐 1. Executive Summary & Vision
 
-**OmniPilot-MCP** is a state-of-the-art Computer-Use and GUI Automation executive agent designed to bridge Large Language Models (LLMs) with web applications and OS environments using the **Model Context Protocol (MCP)** standard.
+While 95% of AI automation solutions are basic text wrappers or fragile RAG bots, **OmniPilot-MCP** represents the frontier of **Computer-Use and Cross-Platform GUI Execution** — the same paradigm pioneered by Anthropic Computer Use and Google Project Jarvis.
 
-It features:
-- 👁️ **Dual-Perception Engine:** Hybrid accessibility DOM inspection + visual screen coordinates.
-- 🛡️ **3-Tier Risk Engine:** Deterministic pre-execution safety classifier (Tier 1 Safe Read-Only, Tier 2 Recoverable, Tier 3 Critical/Irreversible).
-- 🛑 **Human-in-the-Loop (HITL) Guardrails:** Suspends critical executions (payments, deletions, email dispatch) until visual human confirmation is provided.
-- ⚡ **Strict JSON-RPC 2.0 Compliance:** Standard Model Context Protocol SDK implementation compatible with Claude Desktop, Cursor, and custom MCP clients.
+OmniPilot-MCP translates complex natural language instructions (*"Extract supplier invoices, fill the internal ERP payment draft, and prepare the wire transfer"*) into deterministic actions across web and desktop canvases.
+
+It implements:
+1. **👁️ Dual-Perception Engine:** Fuses visual pixels (lossless screenshotting with coordinate bounding boxes) with semantic accessibility trees (`page.locator().ariaSnapshot()`).
+2. **🛡️ 3-Tier Risk Engine:** Pre-execution safety classifier guarding against accidental data deletion, unauthorized payments, or unintended communications.
+3. **🛑 Human-in-the-Loop (HITL) Guardrail:** Generates visual alert overlays with red bounding boxes on target buttons, suspending execution until human approval is confirmed.
+4. **⚡ Standard MCP Protocol (`2024-11-05`):** Native JSON-RPC 2.0 interoperability for Claude Desktop, Cursor, and any MCP client.
+
+```mermaid
+flowchart TD
+    User["User Instruction (Natural Language / Claude / Cursor)"] --> MCPClient["MCP Client (Claude Desktop / Runner / CLI)"]
+    MCPClient -->|JSON-RPC 2.0| MCPServer["OmniPilot-MCP Server"]
+    
+    subgraph CoreEngine ["OmniPilot Core Engine"]
+        MCPServer --> DualPerception["Dual-Perception Engine"]
+        DualPerception -->|Web Context| PlaywrightDOM["Accessibility Tree & DOM Parser"]
+        DualPerception -->|Visual Grounding| VisionEngine["Vision & BoundingBox Coordinate Engine"]
+        
+        PlaywrightDOM --> RiskEngine{"3-Tier Risk Engine"}
+        VisionEngine --> RiskEngine
+        
+        RiskEngine -->|Tier 1: Read-Only| AutoExec["Autonomous Execution (Screenshot, DOM Inspect)"]
+        RiskEngine -->|Tier 2: Mutating Low-Risk| LoggedExec["Audited Execution (Form Fill, Draft Save)"]
+        RiskEngine -->|Tier 3: Critical Action| HITLModal["🛑 HITL Guardrail & Visual Confirmation"]
+    end
+    
+    HITLModal -->|Human Approval Granted| OSExecution["Execution Engine (Playwright / OS Level)"]
+    AutoExec --> OSExecution
+    LoggedExec --> OSExecution
+```
 
 ---
 
-## 🛠️ MCP Tool Catalog (`tools/list`)
+## 📊 2. Architectural Comparison Matrix
 
-| Tool Name | Parameters | Risk Tier | Description |
-| :--- | :--- | :--- | :--- |
-| `omnipilot_take_screenshot` | `target: 'browser' \| 'desktop'`, `format: 'base64'` | **Tier 1 (Safe)** | Captures active display or browser canvas with reference coordinates. |
-| `omnipilot_inspect_dom` | `selector?: string`, `includeAccessibility: boolean` | **Tier 1 (Safe)** | Extracts semantic ARIA accessibility tree and interactive DOM elements. |
-| `omnipilot_click_element` | `selector: string`, `waitForNavigation?: boolean` | **Tier 2 / Tier 3** | Clicks a DOM element deterministically; escalates to Tier 3 if selector matches critical actions. |
-| `omnipilot_click_coordinate` | `x: number`, `y: number`, `button: 'left' \| 'right'` | **Tier 2 (Low Risk)**| Dispatches hardware-level cursor clicks at canvas/screen coordinates. |
-| `omnipilot_type_text` | `text: string`, `selector?: string`, `isSecret?: boolean` | **Tier 2 / Tier 3** | Types keystrokes or fills form controls; escalates to Tier 3 for credentials. |
-| `omnipilot_request_approval` | `actionSummary: string`, `tier: 3`, `boundingBox?: Rect` | **Tier 3 (Critical)**| Guardrail suspending execution for explicit human authorization. |
+| Capability | Standard Selenium / Playwright Wrappers | Anthropic Computer Use (Raw) | **OmniPilot-MCP** |
+| :--- | :---: | :---: | :---: |
+| **Protocol Standardization** | ❌ Proprietary APIs | ❌ Anthropic API only | ✅ **Standard Model Context Protocol (`2024-11-05`)** |
+| **Dual Perception (Vision + ARIA)** | ❌ DOM-only | ❌ Vision-only (coordinates) | ✅ **Hybrid Dual-Perception (DOM + Vision Grounding)** |
+| **Safety Engine & Risk Tiers** | ❌ None | ❌ Prompt-only guardrails | ✅ **Deterministic 3-Tier Pre-Execution Engine** |
+| **Visual Human-in-the-Loop (HITL)** | ❌ No | ❌ Terminal only | ✅ **Automated Red Bounding Box Frame + Approval Modal** |
+| **Audit Trail & Compliance** | ❌ Fragmented logs | ❌ Unstructured | ✅ **Tamper-Evident Structured JSON Audit Trail** |
+| **Real-time Web Cockpit** | ❌ No | ❌ No | ✅ **React 19 + Vite Live Control Dashboard** |
 
 ---
 
-## 📦 Getting Started
+## 🛠️ 3. MCP Tool Catalog (`tools/list`)
+
+OmniPilot-MCP exposes 6 standardized tools through the Model Context Protocol:
+
+| Tool Name | Risk Tier | Primary Input Parameters | Description |
+| :--- | :---: | :--- | :--- |
+| `omnipilot_take_screenshot` | **Tier 1 (Safe)** | `target: 'browser' \| 'desktop'`, `format: 'base64'` | Captures active display or headless browser canvas with reference metadata. |
+| `omnipilot_inspect_dom` | **Tier 1 (Safe)** | `selector?: string`, `includeAccessibility: boolean` | Extracts semantic ARIA accessibility tree and interactive DOM elements with bounding boxes. |
+| `omnipilot_click_element` | **Tier 2 / Tier 3** | `selector: string`, `waitForNavigation?: boolean` | Deterministically clicks DOM elements; escalates to Tier 3 if selector matches critical operations. |
+| `omnipilot_click_coordinate` | **Tier 2 (Low Risk)** | `x: number`, `y: number`, `button?: 'left' \| 'right'` | Dispatches hardware-level cursor clicks at canvas/screen XY coordinates. |
+| `omnipilot_type_text` | **Tier 2 / Tier 3** | `text: string`, `selector?: string`, `isSecret?: boolean` | Types keystrokes or fills form controls; masks credentials and escalates to Tier 3 when `isSecret: true`. |
+| `omnipilot_request_approval` | **Tier 3 (Critical)** | `actionSummary: string`, `tier: 3`, `boundingBox?: Rect` | **HITL Guardrail:** Suspends execution, generates annotated visual frame, and awaits human authorization. |
+
+---
+
+## 🔒 4. 3-Tier Safety Engine (Tiered Risk Engine)
+
+Every incoming action is analyzed before execution:
+
+```mermaid
+stateDiagram-v2
+    [*] --> IntentAnalysis
+    IntentAnalysis --> Tier1_Safe: Read-Only Actions (Screenshot, Inspect DOM)
+    IntentAnalysis --> Tier2_LowRisk: Recoverable Operations (Typing, Draft Saving)
+    IntentAnalysis --> Tier3_Critical: Irreversible Operations (Delete, Pay, Wire, Send, Secret)
+    
+    Tier1_Safe --> ImmediateExecution: Latency 0ms
+    Tier2_LowRisk --> LoggedExecution: Audited in Trail
+    Tier3_Critical --> FlowSuspension: Red Bounding Box Generated
+    
+    FlowSuspension --> HumanReview
+    HumanReview --> AuthorizedExecution: Human confirms [Approve]
+    HumanReview --> AbortOperation: Human rejects [Cancel] / Timeout
+```
+
+- **Tier 1 (Safe - Read Only):** Zero side-effects. Execution occurs immediately at zero latency.
+- **Tier 2 (Low Risk - Recoverable):** Internal navigation and non-critical form filling. Execution is traced in the audit log.
+- **Tier 3 (Critical - Irreversible):** Financial transactions, deletions, external dispatches, or password entries. The agent pauses, highlights the target button visually, and waits for confirmation.
+
+---
+
+## 🚀 5. Quickstart & Usage
 
 ### Prerequisites
-- Node.js `v20.0.0` or higher
-- npm `v10.0.0` or higher
+- **Node.js:** `>= 20.0.0`
+- **npm:** `>= 10.0.0`
 
 ### Installation
 
@@ -49,26 +117,34 @@ cd OmniPilot-MCP
 npm install
 ```
 
-### Build & Test
+### Running Test Suite & Demos
 
 ```bash
-# Compile TypeScript to dist/
+# Compile TypeScript (Strict Mode)
 npm run build
 
-# Run unit tests with Vitest
+# Run complete Vitest suite (32 unit & E2E tests)
 npm test
 
-# Run interactive CLI showcase runner
+# Run Procurement & Guarded Email Dispatch E2E Demo
+npm run demo
+
+# Run Dual-Perception CLI Diagnostics Showcase
 npm run cli
 ```
 
-### Run MCP Server (Stdio)
+### Running the Web Control Dashboard
 
 ```bash
-npm start
+# Start the live dashboard on http://localhost:3000
+npm run dashboard
 ```
 
-### Configure Claude Desktop (`claude_desktop_config.json`)
+Open `http://localhost:3000` to access the real-time visual canvas, interactive bounding box highlights, and the HITL approval cockpit.
+
+### Connecting to Claude Desktop
+
+Add OmniPilot-MCP to your `claude_desktop_config.json`:
 
 ```json
 {
@@ -83,42 +159,72 @@ npm start
 
 ---
 
-## 🏛️ Project Architecture
+## 📂 6. Repository Layout
 
 ```text
 d:/omnipilot-mcp/
-├── .github/workflows/ci.yml     # Continuous Integration pipeline
-├── docker/                      # Multi-stage Docker packaging
+├── .github/workflows/ci.yml         # GitHub Actions CI/CD Pipeline
+├── docker/                          # Multi-stage Docker packaging
+│   ├── Dockerfile
+│   └── docker-compose.yml
 ├── src/
 │   ├── mcp/
-│   │   ├── mcpServer.ts         # Core JSON-RPC 2.0 MCP Server
-│   │   ├── schemas.ts           # Zod schema definitions
-│   │   └── handlers/            # Tools, resources, and prompt handlers
+│   │   ├── mcpServer.ts             # Core JSON-RPC 2.0 MCP Server
+│   │   ├── schemas.ts               # Zod validation contracts
+│   │   └── handlers/                # Tools, Resources, Prompts handlers
 │   ├── perception/
-│   │   ├── domEngine.ts         # ARIA and DOM accessibility parser
-│   │   ├── visionEngine.ts      # Screenshotting & coordinate mapper
-│   │   └── dualPerception.ts    # Hybrid Dual-Perception aggregator
+│   │   ├── domEngine.ts             # Semantic ARIA accessibility parser
+│   │   ├── visionEngine.ts          # Screenshot capture & coordinate mapper
+│   │   ├── visualAnnotator.ts       # Sharp-powered SVG bounding box overlay
+│   │   └── dualPerception.ts        # Hybrid DOM + Vision coordinator
 │   ├── execution/
-│   │   ├── browserDriver.ts     # Browser driver & Playwright interface
-│   │   └── desktopDriver.ts     # OS display and mouse driver
+│   │   ├── browserDriver.ts         # Playwright Chromium headless driver
+│   │   └── desktopDriver.ts         # OS-level display & mouse coordinator
 │   ├── safety/
-│   │   ├── riskEngine.ts        # 3-Tier safety risk classifier
-│   │   └── approvalGate.ts      # Event-driven HITL guardrail
-│   ├── cli.ts                   # E2E CLI showcase runner
-│   └── index.ts                 # Stdio MCP entrypoint
+│   │   ├── riskEngine.ts            # Deterministic 3-Tier risk classifier
+│   │   └── approvalGate.ts          # Event-driven HITL guardrail & audit trail
+│   ├── server/
+│   │   ├── dashboardApi.ts          # REST/Static server for Web Cockpit
+│   │   └── startDashboard.ts        # Dashboard launcher entrypoint
+│   ├── scenarios/
+│   │   └── procurementScenario.ts   # E2E ERP invoice & email draft scenario
+│   ├── cli.ts                       # CLI diagnostics runner
+│   └── index.ts                     # MCP Stdio entrypoint
+├── web-dashboard/                   # React 19 + Vite Web Control Dashboard
+│   ├── src/
+│   │   ├── components/
+│   │   │   ├── Header.tsx           # Status and controls header
+│   │   │   ├── LiveCanvas.tsx       # Live visual canvas with bounding boxes
+│   │   │   ├── ApprovalGateModal.tsx# Interactive HITL approval modal
+│   │   │   └── AuditLogView.tsx     # Structured audit trail view
+│   │   └── App.tsx
+│   ├── package.json
+│   └── vite.config.ts
 ├── tests/
-│   └── unit/                    # Vitest unit test suite
+│   ├── unit/                        # Risk Engine, Gate, MCP Server, Dashboard tests
+│   └── e2e/                         # Complete procurement scenario test
 ├── package.json
-└── tsconfig.json
+├── tsconfig.json
+└── BLUEPRINT.md                     # Original architectural specification
 ```
 
 ---
 
-## 📋 Implementation Phasing Status
+## 🏆 7. Implementation Roadmap Status
 
-- [x] **Fase 1 (Scaffolding & Core MCP):** Repository setup, TypeScript strict mode, Zod schemas, MCP JSON-RPC 2.0 server, 3-Tier Risk Engine, HITL approval gate, unit tests, CI pipeline.
-- [ ] **Fase 2 (Dual-Perception Engine):** Live Playwright integration with ARIA accessibility snapshot parser and visual screenshot coordinate mapper.
-- [ ] **Fase 3 (Tiered Risk Engine & HITL):** Deep guardrails with visual bounding box overlay and interactive CLI/Dashboard approval.
-- [ ] **Fase 4 (Showcase CLI & Test Suite):** Full end-to-end simulated workflow (report generation and order draft).
-- [ ] **Fase 5 (Web Control Dashboard):** React 19 + Vite real-time visual canvas and approval cockpit.
-- [ ] **Fase 6 (Release & Showcase):** Documentation, benchmark comparisons, and deployment artifacts.
+| Phase | Milestone | Status |
+| :--- | :--- | :---: |
+| **Fase 1** | Scaffolding, TypeScript Strict, MCP SDK 2024-11-05, Core Server | ✅ **COMPLETED** |
+| **Fase 2** | Dual-Perception Engine, Playwright Chromium, ARIA Snapshot, Sharp Visual Grounding | ✅ **COMPLETED** |
+| **Fase 3** | Deterministic 3-Tier Risk Engine, HITL Event Gatekeeper, Audit Log Engine | ✅ **COMPLETED** |
+| **Fase 4** | E2E Procurement Demo, Autonomous Report Extraction, Guarded Wire Transfer | ✅ **COMPLETED** |
+| **Fase 5** | Web Control Dashboard (React 19 + Vite), Live Canvas, HITL Modal | ✅ **COMPLETED** |
+| **Fase 6** | Architecture Documentation, Showcase Benchmark, Release Tag v0.1.0 | ✅ **COMPLETED** |
+
+---
+
+## 👤 Author & Architecture
+
+* **Architect & Developer:** Gabriele Mannino
+* **Repository:** [https://github.com/GabriMannino-pt/OmniPilot-MCP](https://github.com/GabriMannino-pt/OmniPilot-MCP)
+* **License:** MIT License
