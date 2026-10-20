@@ -18,6 +18,9 @@
     "dev": "tsx src/index.ts",
     "cli": "tsx src/cli.ts",
     "demo": "tsx src/scenarios/procurementScenario.ts",
+    "dashboard": "tsx src/server/startDashboard.ts",
+    "build:dashboard": "cd web-dashboard && npm run build",
+    "build:all": "npm run build && cd web-dashboard && npm run build",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage"
