@@ -14,6 +14,19 @@ describe("OmniPilotMcpServer (JSON-RPC 2.0 Integration)", () => {
     client = new Client({ name: "test-client", version: "1.0.0" }, { capabilities: {} });
     await server.connect(serverTransport);
     await client.connect(clientTransport);
+
+    // Setup an active page with test elements for live interaction
+    const html = `
+      <!DOCTYPE html>
+      <html>
+        <body>
+          <nav class="menu-item"><a href="#menu">Menu Link</a></nav>
+          <input type="text" id="order_notes" placeholder="Notes"/>
+          <button id="confirm">Confirm</button>
+        </body>
+      </html>
+    `;
+    await server.getContext().browserDriver.navigate(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
   });
 
   afterEach(async () => {

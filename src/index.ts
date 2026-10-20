@@ -10,6 +10,7 @@ export * from "./safety/riskEngine.js";
 export * from "./safety/approvalGate.js";
 export * from "./perception/domEngine.js";
 export * from "./perception/visionEngine.js";
+export * from "./perception/visualAnnotator.js";
 export * from "./perception/dualPerception.js";
 export * from "./execution/browserDriver.js";
 export * from "./execution/desktopDriver.js";

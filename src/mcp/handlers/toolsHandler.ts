@@ -488,6 +488,24 @@ export function registerAllTools(server: McpServer, ctx: ToolsContext): void {
     },
     async (args) => {
       const startTime = Date.now();
+
+      // Optionally capture annotated visual frame with red bounding box
+      let annotatedFrame: string | undefined = undefined;
+      if (args.boundingBox) {
+        try {
+          const capture = await ctx.visionEngine.capture("browser", "base64", false, [
+            {
+              box: args.boundingBox,
+              label: `TIER 3: ${args.actionSummary.slice(0, 30)}`,
+              color: "#ef4444",
+            },
+          ]);
+          annotatedFrame = capture.data;
+        } catch {
+          // Non-blocking visual decoration fallback
+        }
+      }
+
       const approval = await ctx.approvalGate.requestApproval(
         args.actionSummary,
         args.tier,
@@ -505,19 +523,28 @@ export function registerAllTools(server: McpServer, ctx: ToolsContext): void {
         success: approval.approved,
       });
 
+      const contents: any[] = [];
+      if (annotatedFrame) {
+        contents.push({
+          type: "image",
+          data: annotatedFrame,
+          mimeType: "image/png",
+        });
+      }
+
+      contents.push({
+        type: "text",
+        text: JSON.stringify({
+          status: approval.approved ? "approved" : "rejected",
+          requestId: approval.requestId,
+          actionSummary: args.actionSummary,
+          boundingBox: args.boundingBox,
+          tier: "TIER_3_CRITICAL",
+        }),
+      });
+
       return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify({
-              status: approval.approved ? "approved" : "rejected",
-              requestId: approval.requestId,
-              actionSummary: args.actionSummary,
-              boundingBox: args.boundingBox,
-              tier: "TIER_3_CRITICAL",
-            }),
-          },
-        ],
+        content: contents,
       };
     }
   );

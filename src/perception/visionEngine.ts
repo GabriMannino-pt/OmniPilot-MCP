@@ -1,14 +1,14 @@
 import { BrowserDriver } from "../execution/browserDriver.js";
 import { DesktopDriver } from "../execution/desktopDriver.js";
 import { BoundingBox } from "../mcp/schemas.js";
+import { VisualAnnotator, AnnotationItem } from "./visualAnnotator.js";
 
 export interface ScreenshotResult {
   target: "browser" | "desktop";
   format: "base64" | "path";
   data: string;
   timestamp: string;
-  width?: number;
-  height?: number;
+  annotated?: boolean;
 }
 
 export class VisionEngine {
@@ -20,7 +20,8 @@ export class VisionEngine {
   public async capture(
     target: "browser" | "desktop" = "browser",
     format: "base64" | "path" = "base64",
-    fullPage: boolean = false
+    fullPage: boolean = false,
+    annotations?: AnnotationItem[]
   ): Promise<ScreenshotResult> {
     const timestamp = new Date().toISOString();
     let base64Data: string;
@@ -31,11 +32,16 @@ export class VisionEngine {
       base64Data = await this.desktopDriver.takeScreenshot();
     }
 
+    if (annotations && annotations.length > 0) {
+      base64Data = await VisualAnnotator.annotateImage(base64Data, annotations);
+    }
+
     return {
       target,
       format,
       data: base64Data,
       timestamp,
+      annotated: Boolean(annotations && annotations.length > 0),
     };
   }
 
