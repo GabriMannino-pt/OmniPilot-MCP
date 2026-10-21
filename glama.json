@@ -1,0 +1,22 @@
+{
+  "$schema": "https://glama.ai/mcp/schemas/server.json",
+  "maintainers": [
+    "GabriMannino-pt"
+  ],
+  "name": "OmniPilot-MCP",
+  "description": "Autonomous Cross-Platform Executive Agent & Pre-Execution Visual Firewall for Browser & Desktop Operations via Model Context Protocol (MCP)",
+  "type": "mcp_server",
+  "status": "active",
+  "transport": [
+    "stdio"
+  ],
+  "keywords": [
+    "mcp",
+    "browser-automation",
+    "computer-use",
+    "claude",
+    "visual-firewall",
+    "playwright",
+    "safety"
+  ]
+}
