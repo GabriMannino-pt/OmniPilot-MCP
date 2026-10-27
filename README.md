@@ -20,6 +20,10 @@
 
 ## 🌐 1. Executive Summary & Vision
 
+<p align="center">
+  <img src="./screenshots/omnipilot-demo-en.gif" alt="OmniPilot-MCP Animated Demo — AI Browser Autopilot with Deterministic Human Safety Lock" width="100%" />
+</p>
+
 While most AI automation scripts are fragile text wrappers or unguarded browser drivers, **OmniPilot-MCP** combines **Autonomous Goal Execution**, **Set-of-Mark (SoM) Dual-Perception**, and a **Deterministic Pre-Execution Visual Firewall** in a single unified Model Context Protocol (`2024-11-05`) server and bilingual Web Control Cockpit.
 
 Give OmniPilot a high-level instruction in English or Italian — for example:
@@ -85,6 +89,10 @@ Unlike prompt-based guardrails that an LLM can accidentally bypass, OmniPilot en
 # 🇮🇹 Documentazione Italiana
 
 ## 🌐 1. Panoramica: Come funziona (Spiegato Semplice)
+
+<p align="center">
+  <img src="./screenshots/omnipilot-demo-it.gif" alt="OmniPilot-MCP Demo Animata — Pilota Automatico Browser con Sicura Umana Deterministica" width="100%" />
+</p>
 
 **OmniPilot-MCP** è un agente esecutivo autonomo dotato di **freno d'emergenza visivo** e pannello di controllo bilingue (**Italiano / Inglese**).
 
